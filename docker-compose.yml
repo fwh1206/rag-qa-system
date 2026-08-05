@@ -1,0 +1,46 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: rag_qa_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${RAG_DB_PASSWORD:-root}
+      MYSQL_DATABASE: ${RAG_DB_NAME:-rag_qa_db}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    container_name: rag_qa_app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      DEEPSEEK_URL: ${DEEPSEEK_URL:-https://api.deepseek.com/v1/chat/completions}
+      RAG_DB_HOST: db
+      RAG_DB_PORT: "3306"
+      RAG_DB_USER: root
+      RAG_DB_PASSWORD: ${RAG_DB_PASSWORD:-root}
+      RAG_DB_NAME: ${RAG_DB_NAME:-rag_qa_db}
+      RAG_AUTH_USER: ${RAG_AUTH_USER:-admin}
+      RAG_AUTH_PASSWORD: ${RAG_AUTH_PASSWORD:-admin123}
+      RAG_CORS_ORIGINS: ${RAG_CORS_ORIGINS:-http://localhost:8000,http://127.0.0.1:8000}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./vector_db:/app/vector_db
+      - ./logs:/app/logs
+
+volumes:
+  mysql_data:

@@ -1,0 +1,10 @@
+venv
+.git
+.idea
+.vs
+__pycache__
+*.pyc
+.env
+logs
+vector_db
+data

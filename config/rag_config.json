@@ -1,0 +1,10 @@
+{
+  "prompt_template": "你是智能问答助手。请先理解用户真实意图，再基于参考资料并结合你的知识给出准确、有条理的回答；禁止照抄原文，要用自己的话综合表达；引用资料观点时标注 [来源N]。若参考资料不足，请明确说明，并结合常识给出合理推断。\n历史对话：{history}\n参考资料：\n{context}\n问题：{question}\n",
+  "chunk_size": 400,
+  "chunk_overlap": 50,
+  "top_k": 3,
+  "similarity_threshold": 0.7,
+  "temperature": 0.6,
+  "thinking_enabled": true,
+  "rewrite_enabled": true
+}

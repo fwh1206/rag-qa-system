@@ -1,0 +1,694 @@
+[
+  {
+    "question": "云帆平台包含哪些核心模块？",
+    "expected": [
+      {
+        "filename": "公司产品手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "专业版套餐每月多少钱，包含多少账号？",
+    "expected": [
+      {
+        "filename": "公司产品手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "标准版包含多少条线索？",
+    "expected": [
+      {
+        "filename": "公司产品手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "工单模块支持哪些能力？",
+    "expected": [
+      {
+        "filename": "公司产品手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "数据能导出成哪些格式？",
+    "expected": [
+      {
+        "filename": "公司产品手册.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "旗舰版的响应时间承诺是多少？",
+    "expected": [
+      {
+        "filename": "公司产品手册.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "哪些套餐支持单点登录？",
+    "expected": [
+      {
+        "filename": "公司产品手册.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "云帆的退款政策是什么？",
+    "expected": [
+      {
+        "filename": "公司产品手册.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "云帆平台的收费和售后政策是什么？",
+    "expected": [
+      {
+        "filename": "公司产品手册.md",
+        "chunk_index": 0
+      },
+      {
+        "filename": "公司产品手册.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "B+树索引和哈希索引各适合什么场景？",
+    "expected": [
+      {
+        "filename": "数据库面试题库.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "联合索引的最左前缀原则是什么？",
+    "expected": [
+      {
+        "filename": "数据库面试题库.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "InnoDB 的默认隔离级别是什么？",
+    "expected": [
+      {
+        "filename": "数据库面试题库.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "InnoDB 怎么避免可重复读下的幻读？",
+    "expected": [
+      {
+        "filename": "数据库面试题库.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "覆盖索引能带来什么收益？",
+    "expected": [
+      {
+        "filename": "数据库面试题库.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "慢查询一般怎么定位和优化？",
+    "expected": [
+      {
+        "filename": "数据库面试题库.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "EXPLAIN 主要关注哪些字段？",
+    "expected": [
+      {
+        "filename": "数据库面试题库.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "分库分表有哪些分片方式？",
+    "expected": [
+      {
+        "filename": "数据库面试题库.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "分片后怎么解决跨库查询和主键问题？",
+    "expected": [
+      {
+        "filename": "数据库面试题库.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "什么是过拟合，怎么缓解？",
+    "expected": [
+      {
+        "filename": "机器学习基础.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "L1 和 L2 正则化有什么区别？",
+    "expected": [
+      {
+        "filename": "机器学习基础.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "为什么深度学习常用小批量梯度下降？",
+    "expected": [
+      {
+        "filename": "机器学习基础.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "学习率设置不合理会有什么后果？",
+    "expected": [
+      {
+        "filename": "机器学习基础.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "类别不平衡时应该看哪些指标？",
+    "expected": [
+      {
+        "filename": "机器学习基础.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "回归任务常用什么指标？",
+    "expected": [
+      {
+        "filename": "机器学习基础.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "时间特征可以怎么处理？",
+    "expected": [
+      {
+        "filename": "机器学习基础.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "公司的核心工作时间是什么？",
+    "expected": [
+      {
+        "filename": "员工手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "年假怎么计算？",
+    "expected": [
+      {
+        "filename": "员工手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "差旅报销需要多久内提交？",
+    "expected": [
+      {
+        "filename": "员工手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "住宿报销标准是多少？",
+    "expected": [
+      {
+        "filename": "员工手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "员工有哪些福利？",
+    "expected": [
+      {
+        "filename": "员工手册.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "居家办公怎么申请？",
+    "expected": [
+      {
+        "filename": "员工手册.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "离职时有什么要求？",
+    "expected": [
+      {
+        "filename": "员工手册.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "员工请假和福利制度是什么？",
+    "expected": [
+      {
+        "filename": "员工手册.md",
+        "chunk_index": 0
+      },
+      {
+        "filename": "员工手册.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "RAG 系统用了哪些存储组件？",
+    "expected": [
+      {
+        "filename": "RAG系统开发记录.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "为什么向量检索之外还要加 BM25？",
+    "expected": [
+      {
+        "filename": "RAG系统开发记录.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "RRF 融合公式是什么，为什么用排名？",
+    "expected": [
+      {
+        "filename": "RAG系统开发记录.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "两阶段生成分别做什么？",
+    "expected": [
+      {
+        "filename": "RAG系统开发记录.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "流式输出会返回哪些类型的内容？",
+    "expected": [
+      {
+        "filename": "RAG系统开发记录.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "检索效果用什么指标衡量？",
+    "expected": [
+      {
+        "filename": "RAG系统开发记录.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "密码策略有什么要求？",
+    "expected": [
+      {
+        "filename": "网络安全运维手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "备份保留多久，恢复目标是什么？",
+    "expected": [
+      {
+        "filename": "网络安全运维手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "生产环境为什么要通过堡垒机？",
+    "expected": [
+      {
+        "filename": "网络安全运维手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "高危漏洞需要多久修复？",
+    "expected": [
+      {
+        "filename": "网络安全运维手册.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "安全事件发生后怎么处理？",
+    "expected": [
+      {
+        "filename": "网络安全运维手册.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "Docker Compose 如何一键启动？",
+    "expected": [
+      {
+        "filename": "服务器部署手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "Nginx 反向代理 SSE 要注意什么？",
+    "expected": [
+      {
+        "filename": "服务器部署手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "HTTPS 证书怎么获取？",
+    "expected": [
+      {
+        "filename": "服务器部署手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "监控建议关注哪些指标？",
+    "expected": [
+      {
+        "filename": "服务器部署手册.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "发布流程是怎么设计的？",
+    "expected": [
+      {
+        "filename": "服务器部署手册.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "账号数量多、需要自动化能力时该选哪一档？",
+    "expected": [
+      {
+        "filename": "公司产品手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "平台在数据安全上是怎么做的？",
+    "expected": [
+      {
+        "filename": "公司产品手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "非工作时间遇到问题有人管吗？",
+    "expected": [
+      {
+        "filename": "公司产品手册.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "买完觉得不合适能退吗？",
+    "expected": [
+      {
+        "filename": "公司产品手册.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "数据库里怎么快速定位我要的行？",
+    "expected": [
+      {
+        "filename": "数据库面试题库.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "多列查询时索引的字段顺序重要吗？",
+    "expected": [
+      {
+        "filename": "数据库面试题库.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "并发事务下读到一致的数据靠什么？",
+    "expected": [
+      {
+        "filename": "数据库面试题库.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "线上 SQL 突然变慢，第一步应该做什么？",
+    "expected": [
+      {
+        "filename": "数据库面试题库.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "单表数据量太大，一般怎么处理？",
+    "expected": [
+      {
+        "filename": "数据库面试题库.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "训练集成绩好、测试集崩了是什么问题？",
+    "expected": [
+      {
+        "filename": "机器学习基础.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "希望模型更稀疏、方便做特征筛选，用什么方法？",
+    "expected": [
+      {
+        "filename": "机器学习基础.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "正负样本比例悬殊时应该关注什么？",
+    "expected": [
+      {
+        "filename": "机器学习基础.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "预测值和真实值差距怎么量化？",
+    "expected": [
+      {
+        "filename": "机器学习基础.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "公司对上下班时间有什么规定？",
+    "expected": [
+      {
+        "filename": "员工手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "想申请比较长的假期，流程上有什么要求？",
+    "expected": [
+      {
+        "filename": "员工手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "出差住宿一天能报销多少钱？",
+    "expected": [
+      {
+        "filename": "员工手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "公司提供哪些保险和补贴？",
+    "expected": [
+      {
+        "filename": "员工手册.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "RAG 里向量数据库和 MySQL 各自负责什么？",
+    "expected": [
+      {
+        "filename": "RAG系统开发记录.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "两路检索结果是怎么合并成一份的？",
+    "expected": [
+      {
+        "filename": "RAG系统开发记录.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "为什么正式回答前要先让模型思考一轮？",
+    "expected": [
+      {
+        "filename": "RAG系统开发记录.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "答案是一边生成一边显示的吗？",
+    "expected": [
+      {
+        "filename": "RAG系统开发记录.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "系统里用户的密码怎么保存才算安全？",
+    "expected": [
+      {
+        "filename": "网络安全运维手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "数据库坏了，数据还能恢复吗？",
+    "expected": [
+      {
+        "filename": "网络安全运维手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "发现高危漏洞后多久必须修？",
+    "expected": [
+      {
+        "filename": "网络安全运维手册.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "项目怎么在别人机器上快速跑起来？",
+    "expected": [
+      {
+        "filename": "服务器部署手册.md",
+        "chunk_index": 0
+      }
+    ]
+  },
+  {
+    "question": "服务是否正常、磁盘还够不够，怎么知道？",
+    "expected": [
+      {
+        "filename": "服务器部署手册.md",
+        "chunk_index": 1
+      }
+    ]
+  },
+  {
+    "question": "新功能上线怎么做才不容易出事故？",
+    "expected": [
+      {
+        "filename": "服务器部署手册.md",
+        "chunk_index": 1
+      }
+    ]
+  }
+]

@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+.env
+.idea/
+.vs/
+.vscode/
+.pytest_cache/
+logs/
+vector_db/
+data/private/
+data/file_meta.json
+data/eval_report.json
