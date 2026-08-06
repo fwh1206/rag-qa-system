@@ -21,8 +21,8 @@ DEFAULT_CONFIG = {
     "top_k": 3,
     "similarity_threshold": 0.70,
     "temperature": 0.6,
-    "thinking_enabled": True,
-    "rewrite_enabled": True,
+    "thinking_enabled": False,
+    "rewrite_enabled": False,
 }
 
 _lock = threading.Lock()

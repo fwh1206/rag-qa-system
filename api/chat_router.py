@@ -12,13 +12,20 @@ from core.database import load_chat_memory, require_session_access, save_chat_re
 from core.llm_client import llm_chat, llm_chat_stream
 from core.logger import write_log
 from core.query_rewrite import rewrite_query
-from core.rag_engine import hybrid_search
+from core.rag_engine import bm25_search, hybrid_search
 
 
 router = APIRouter(prefix="", tags=["对话问答"])
 
 MAX_QUESTION_LENGTH = 2000
 NO_CONTEXT_ANSWER = "知识库中未找到相关内容，请换个问法或先上传相关文档。"
+GENERAL_PROMPT = (
+    "你是一个自然、有分寸的中文对话助手。用户可能在聊生活、想法或各类普通话题。"
+    "请结合历史对话，用自然、清晰、有条理的中文回复；"
+    "不要提及知识库、检索或参考资料，除非用户主动问起。\n"
+    "历史对话：{history}\n"
+    "用户消息：{question}\n"
+)
 
 
 class ChatRequest(BaseModel):
@@ -27,6 +34,7 @@ class ChatRequest(BaseModel):
     top_k: int | None = Field(None, ge=1, le=10)
     temperature: float | None = Field(None, ge=0.0, le=1.0)
     category: str | None = Field(None, max_length=50)
+    mode: str = Field("auto", pattern="^(auto|rag|chat)$")
 
 
 def _retrieve(question: str, top_k: int, category: str | None = None):
@@ -93,16 +101,24 @@ def _sse(data: dict) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def _prepare_retrieval(payload: ChatRequest, cfg: dict):
+def _prepare_retrieval(payload: ChatRequest, cfg: dict, allow_rewrite: bool = True):
     """加载会话记忆并按需做多轮问题改写，返回改写后用于检索的问题。"""
     memory_context = load_chat_memory(payload.session_id)
     retrieve_q = payload.question.strip()
-    if cfg.get("rewrite_enabled", False) and memory_context.strip():
+    if allow_rewrite and cfg.get("rewrite_enabled", False) and memory_context.strip():
         rewritten = rewrite_query(retrieve_q, memory_context)
         if rewritten != retrieve_q:
             write_log(f"多轮问题改写：{retrieve_q} -> {rewritten}")
         retrieve_q = rewritten
     return retrieve_q, memory_context
+
+
+def _resolve_mode(payload: ChatRequest, cfg: dict):
+    """返回 (是否走自由对话, 召回问题, 会话记忆)。"""
+    if payload.mode == "chat":
+        return True, payload.question.strip(), load_chat_memory(payload.session_id)
+    retrieve_q, memory_context = _prepare_retrieval(payload, cfg, allow_rewrite=True)
+    return False, retrieve_q, memory_context
 
 
 @router.post("/chat")
@@ -117,8 +133,29 @@ def chat(payload: ChatRequest, current: dict = Depends(require_auth)):
     temperature = payload.temperature if payload.temperature is not None else cfg["temperature"]
     write_log(f"用户提问：{q}")
 
-    retrieve_q, memory_context = _prepare_retrieval(payload, cfg)
-    valid_context, source_info = _retrieve(retrieve_q, top_k, payload.category)
+    use_general, retrieve_q, memory_context = _resolve_mode(payload, cfg)
+    valid_context = []
+    source_info = []
+    if not use_general:
+        if payload.mode == "auto" and not bm25_search(retrieve_q, top_k, payload.category):
+            use_general = True
+    if not use_general:
+        valid_context, source_info = _retrieve(retrieve_q, top_k, payload.category)
+        if payload.mode == "auto" and not valid_context:
+            use_general = True
+
+    if use_general:
+        prompt = GENERAL_PROMPT.format(history=memory_context, question=q)
+        answer = llm_chat(prompt, temperature)
+        save_chat_record(payload.session_id, q, answer, owner=current.get("username"))
+        return {
+            "question": q,
+            "answer": answer,
+            "thinking": "",
+            "source_list": [],
+            "session_id": payload.session_id,
+            "found": False,
+        }
 
     thinking_enabled = bool(cfg.get("thinking_enabled", True))
     if not valid_context and not thinking_enabled:
@@ -174,8 +211,40 @@ def chat_stream(payload: ChatRequest, current: dict = Depends(require_auth)):
     temperature = payload.temperature if payload.temperature is not None else cfg["temperature"]
     write_log(f"用户提问（流式）：{q}")
 
-    retrieve_q, memory_context = _prepare_retrieval(payload, cfg)
-    valid_context, source_info = _retrieve(retrieve_q, top_k, payload.category)
+    use_general, retrieve_q, memory_context = _resolve_mode(payload, cfg)
+    valid_context = []
+    source_info = []
+    if not use_general:
+        if payload.mode == "auto" and not bm25_search(retrieve_q, top_k, payload.category):
+            use_general = True
+    if not use_general:
+        valid_context, source_info = _retrieve(retrieve_q, top_k, payload.category)
+        if payload.mode == "auto" and not valid_context:
+            use_general = True
+
+    if use_general:
+        def general_stream():
+            yield _sse({"type": "sources", "sources": [], "found": False})
+            parts = []
+            prompt = GENERAL_PROMPT.format(history=memory_context, question=q)
+            try:
+                for token in llm_chat_stream(prompt, temperature):
+                    parts.append(token)
+                    yield _sse({"type": "token", "content": token})
+            except Exception as exc:
+                write_log(f"自由对话流式回答中断：{exc}")
+                yield _sse({"type": "error", "message": str(getattr(exc, "detail", "AI服务调用失败"))})
+                return
+            answer = "".join(parts)
+            if answer.strip():
+                save_chat_record(payload.session_id, q, answer, owner=current.get("username"))
+            yield _sse({"type": "done", "answer": answer, "thinking": ""})
+
+        return StreamingResponse(
+            general_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
 
     thinking_enabled = bool(cfg.get("thinking_enabled", True))
     if not valid_context and not thinking_enabled:

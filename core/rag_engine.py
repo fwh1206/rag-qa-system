@@ -38,7 +38,7 @@ def get_embed_model():
     global _embed_model
     if _embed_model is None:
         write_log("加载嵌入模型 BAAI/bge-small-zh")
-        _embed_model = SentenceTransformer("BAAI/bge-small-zh")
+        _embed_model = SentenceTransformer("BAAI/bge-small-zh", local_files_only=True)
     return _embed_model
 
 
@@ -232,6 +232,11 @@ def _bm25_search(question: str, top_k: int, category: str | None = None):
         if len(hits) >= top_k:
             break
     return hits
+
+
+def bm25_search(question: str, top_k: int, category: str | None = None):
+    """纯 BM25 快速召回，不依赖嵌入模型，用于自动模式的轻量预判。"""
+    return _bm25_search(question, top_k, category)
 
 
 def hybrid_search(

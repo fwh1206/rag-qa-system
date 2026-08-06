@@ -1,4 +1,11 @@
-from api.chat_router import _build_answer_prompt, _labeled_context, _retrieve, _sse
+from api.chat_router import (
+    ChatRequest,
+    _build_answer_prompt,
+    _labeled_context,
+    _resolve_mode,
+    _retrieve,
+    _sse,
+)
 
 
 def test_retrieve_threshold_keeps_bm25_hits(monkeypatch):
@@ -43,3 +50,12 @@ def test_answer_prompt_contains_thinking_and_placeholders():
 def test_sse_event_format():
     event = _sse({"type": "token", "content": "你好"})
     assert event == 'data: {"type": "token", "content": "你好"}\n\n'
+
+
+def test_resolve_mode_chat_skips_rewrite(monkeypatch):
+    monkeypatch.setattr("api.chat_router.load_chat_memory", lambda session_id: "历史对话")
+    payload = ChatRequest(question="今天适合去哪里散步", mode="chat")
+    general, retrieve_q, memory = _resolve_mode(payload, {})
+    assert general is True
+    assert retrieve_q == "今天适合去哪里散步"
+    assert memory == "历史对话"
