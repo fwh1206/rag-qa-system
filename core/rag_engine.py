@@ -61,7 +61,11 @@ def get_embed_model():
         with _embed_lock:
             if _embed_model is None:
                 write_log("加载嵌入模型 BAAI/bge-small-zh")
-                _embed_model = SentenceTransformer("BAAI/bge-small-zh", local_files_only=True)
+                try:
+                    _embed_model = SentenceTransformer("BAAI/bge-small-zh", local_files_only=True)
+                except Exception as exc:
+                    write_log(f"本地未找到嵌入模型，尝试在线下载：{exc}")
+                    _embed_model = SentenceTransformer("BAAI/bge-small-zh", local_files_only=False)
     return _embed_model
 
 

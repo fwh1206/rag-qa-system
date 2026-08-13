@@ -29,7 +29,8 @@ _SANDBOX_BLOCKS_DELETE = getattr(os.remove, "__module__", "") == "sitecustomize"
 
 
 @pytest.fixture(scope="module", autouse=True)
-def _clean_test_data():
+def _clean_test_data(client):
+    # 先启动 TestClient 触发 init_db 建表，再清理测试数据
     delete_user(TEST_USER)
     yield
 
