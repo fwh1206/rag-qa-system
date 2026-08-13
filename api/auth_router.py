@@ -5,7 +5,7 @@ import re
 import secrets
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from config.email_config import is_email_configured
@@ -31,10 +31,21 @@ from core.database import (
 )
 from core.emailer import generate_verification_code, send_verification_email
 from core.llm_client import llm_chat, resolve_user_llm_config
+from core.rate_limiter import SlidingWindowRateLimiter
 from core.secret_box import encrypt_secret
 
 router = APIRouter(prefix="/auth", tags=["登录鉴权"])
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+LOGIN_LIMITER = SlidingWindowRateLimiter(limit=30, window_seconds=60)
+SEND_CODE_LIMITER = SlidingWindowRateLimiter(limit=10, window_seconds=60)
+REGISTER_LIMITER = SlidingWindowRateLimiter(limit=10, window_seconds=60)
+
+
+def _client_key(request: Request) -> str:
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
 
 
 class LoginRequest(BaseModel):
@@ -101,7 +112,9 @@ class PasswordChange(BaseModel):
 
 
 @router.post("/login")
-def auth_login(payload: LoginRequest):
+def auth_login(payload: LoginRequest, request: Request):
+    if not LOGIN_LIMITER.allow(_client_key(request)):
+        raise HTTPException(status_code=429, detail="登录尝试过于频繁，请稍后再试")
     account = payload.username.strip()
     token = login(account, payload.password)
     if not token:
@@ -119,8 +132,10 @@ def auth_login(payload: LoginRequest):
 
 
 @router.post("/send-code")
-def auth_send_code(payload: SendCodeRequest):
+def auth_send_code(payload: SendCodeRequest, request: Request):
     """发送注册/登录邮箱验证码；未配置 SMTP 时按开发模式开关决定是否回显。"""
+    if not SEND_CODE_LIMITER.allow(_client_key(request)):
+        raise HTTPException(status_code=429, detail="验证码发送过于频繁，请稍后再试")
     email = payload.email.strip().lower()
     if not EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="邮箱格式不正确")
@@ -157,8 +172,10 @@ def auth_send_code(payload: SendCodeRequest):
 
 
 @router.post("/login-code")
-def auth_login_code(payload: LoginCodeRequest):
+def auth_login_code(payload: LoginCodeRequest, request: Request):
     """邮箱验证码登录：验证码通过后直接签发 token。"""
+    if not LOGIN_LIMITER.allow(_client_key(request)):
+        raise HTTPException(status_code=429, detail="登录尝试过于频繁，请稍后再试")
     email = payload.email.strip().lower()
     user = get_user_by_email(email)
     if not user:
@@ -179,8 +196,10 @@ def auth_login_code(payload: LoginCodeRequest):
 
 
 @router.post("/reset-password")
-def auth_reset_password(payload: ResetPasswordRequest):
+def auth_reset_password(payload: ResetPasswordRequest, request: Request):
     """邮箱验证码找回密码：验证通过后直接更新密码。"""
+    if not SEND_CODE_LIMITER.allow(_client_key(request)):
+        raise HTTPException(status_code=429, detail="操作过于频繁，请稍后再试")
     email = payload.email.strip().lower()
     user = get_user_by_email(email)
     if not user:
@@ -315,8 +334,10 @@ def change_password(payload: PasswordChange, current: dict = Depends(require_aut
 
 
 @router.post("/register")
-def auth_register(payload: RegisterRequest):
+def auth_register(payload: RegisterRequest, request: Request):
     """自助注册：邮箱验证码校验通过后创建普通用户。"""
+    if not REGISTER_LIMITER.allow(_client_key(request)):
+        raise HTTPException(status_code=429, detail="注册过于频繁，请稍后再试")
     username = payload.username.strip()
     email = payload.email.strip().lower()
     if not EMAIL_RE.match(email):

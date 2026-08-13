@@ -1,6 +1,7 @@
 """大模型客户端：封装任意 OpenAI 兼容接口的同步调用与流式调用。"""
 
 import json
+import time
 
 import requests
 from fastapi import HTTPException
@@ -62,18 +63,30 @@ def llm_chat(
 ) -> str:
     """同步调用大模型，返回完整回答；用于非流式问答和思考阶段。"""
     cfg = _get_llm_config(llm_config)
-    try:
-        resp = requests.post(
-            cfg["url"],
-            json=_payload(prompt, temperature, cfg),
-            headers=_headers(cfg),
-            timeout=(10, read_timeout),
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
-    except Exception as exc:
-        write_log(f"大模型调用异常：{exc!s}")
-        raise HTTPException(status_code=500, detail="AI服务调用失败") from exc
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        resp = None
+        try:
+            resp = requests.post(
+                cfg["url"],
+                json=_payload(prompt, temperature, cfg),
+                headers=_headers(cfg),
+                timeout=(10, read_timeout),
+            )
+            if resp.status_code in (408, 429) or resp.status_code >= 500:
+                raise RuntimeError(f"HTTP {resp.status_code}")
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"]
+        except Exception as exc:
+            last_exc = exc
+            if resp is not None:
+                resp.close()
+            if attempt < 2:
+                time.sleep(0.4 * (2**attempt))
+                continue
+            break
+    write_log(f"大模型调用异常（重试后仍失败）：{last_exc!s}")
+    raise HTTPException(status_code=500, detail="AI服务调用失败") from last_exc
 
 
 def llm_chat_stream(prompt: str, temperature: float = 0.6, llm_config: dict | None = None):
@@ -82,15 +95,32 @@ def llm_chat_stream(prompt: str, temperature: float = 0.6, llm_config: dict | No
     payload = _payload(prompt, temperature, cfg)
     payload["stream"] = True
     resp = None
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            resp = requests.post(
+                cfg["url"],
+                json=payload,
+                headers=_headers(cfg),
+                timeout=(10, 180),
+                stream=True,
+            )
+            if resp.status_code in (408, 429) or resp.status_code >= 500:
+                raise RuntimeError(f"HTTP {resp.status_code}")
+            resp.raise_for_status()
+            break
+        except Exception as exc:
+            last_exc = exc
+            if resp is not None:
+                resp.close()
+                resp = None
+            if attempt < 2:
+                time.sleep(0.4 * (2**attempt))
+                continue
+            write_log(f"大模型流式连接异常（重试后仍失败）：{last_exc!s}")
+            raise HTTPException(status_code=500, detail="AI服务调用失败") from last_exc
+
     try:
-        resp = requests.post(
-            cfg["url"],
-            json=payload,
-            headers=_headers(cfg),
-            timeout=(10, 180),
-            stream=True,
-        )
-        resp.raise_for_status()
         for line in resp.iter_lines(decode_unicode=True):
             if not line:
                 continue

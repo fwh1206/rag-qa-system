@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import Header, HTTPException
 
-from config.settings import AUTH_ENABLED, AUTH_PASSWORD, AUTH_TOKEN_TTL, AUTH_USERNAME
+from config.settings import AUTH_ENABLED, AUTH_TOKEN_TTL
 from core.database import (
     create_auth_token,
     delete_auth_token,
@@ -44,14 +44,12 @@ def revoke_token(token: str):
 
 
 def login(username: str, password: str):
-    """优先校验 MySQL 用户表，再兼容默认管理员账号。"""
+    """只校验 MySQL 用户表，避免默认管理员凭据绕过数据库鉴权。"""
     purge_expired_tokens()
     account = username.strip().lower()
     user = get_user(account) or get_user_by_email(account)
     if user and verify_password(password, user["password_hash"]):
         return create_token(user["username"], user["role"])
-    if not user and account == AUTH_USERNAME and password == AUTH_PASSWORD:
-        return create_token(username, "admin")
     return None
 
 
