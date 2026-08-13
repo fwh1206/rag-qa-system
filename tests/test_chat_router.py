@@ -15,8 +15,8 @@ def test_retrieve_threshold_keeps_bm25_hits(monkeypatch):
         {"filename": "c.txt", "chunk_index": 2, "document": "低相似但BM25命中", "similarity": 0.5, "bm25_score": 8.0, "category": "x"},
         {"filename": "d.txt", "chunk_index": 3, "document": "仅BM25", "similarity": None, "bm25_score": 9.0, "category": "x"},
     ]
-    monkeypatch.setattr("api.chat_router.hybrid_search", lambda q, k, c=None: hits)
-    monkeypatch.setattr("api.chat_router.get_config", lambda: {"similarity_threshold": 0.7})
+    monkeypatch.setattr("api.chat_router.hybrid_search_with_rerank", lambda q, k, c=None, rerank=False, rk=None: hits)
+    monkeypatch.setattr("api.chat_router.get_config", lambda: {"similarity_threshold": 0.7, "rerank_top_k": 3})
 
     contexts, sources = _retrieve("问题", top_k=3)
     assert contexts == ["高相似", "低相似但BM25命中", "仅BM25"]

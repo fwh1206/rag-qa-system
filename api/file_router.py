@@ -1,268 +1,345 @@
-"""文件与知识库接口：负责上传解析、文本录入、向量入库、列表、删除与重建索引。"""  # 模块文档：说明本文件提供文件与知识库接口
+"""文件与知识库接口：上传解析、文本录入、向量入库、列表、删除与重建索引。"""
 
-import os  # 导入操作系统模块，用于文件路径和删除
-import re  # 导入正则模块，用于校验文件名
-import uuid  # 导入 UUID 模块，用于生成临时文件名
+import os
+import re
+import uuid
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile  # 导入路由与文件上传相关类
-from pydantic import BaseModel, Field  # 导入请求体模型基类与字段校验工具
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field
 
-from config.settings import UPLOAD_PATH  # 导入上传目录
-from core.auth import require_admin  # 导入管理员权限依赖
-from core.logger import write_log  # 导入日志写入函数
-from core.rag_engine import (  # 导入向量引擎相关函数
-    SUPPORTED_SUFFIXES,  # 支持的文件后缀
-    clear_all_vector,  # 清空向量库
-    delete_file_vectors,  # 删除文件向量
-    file_to_vector,  # 文件入库
-    get_all_files,  # 获取文件列表
-    hybrid_search,  # 混合检索
+from config.rag_config import get_config
+from core.auth import require_auth
+from core.kg_builder import clear_graph_cache, delete_graph_cache
+from core.logger import write_log
+from core.rag_engine import (
+    SUPPORTED_SUFFIXES,
+    delete_file_vectors,
+    file_to_vector,
+    get_all_files,
+    hybrid_search_with_rerank,
 )
-from utils.file_meta import (  # 导入文件元数据相关函数
-    DEFAULT_CATEGORY,  # 默认分组
-    clear_file_meta,  # 清空元数据
-    get_file_category,  # 获取分组
-    remove_file_meta,  # 删除元数据
-    set_file_category,  # 设置分组
+from utils.file_meta import (
+    DEFAULT_CATEGORY,
+    clear_file_meta,
+    remove_file_meta,
+    set_file_meta,
+    storage_to_abs,
+    user_upload_dir,
+    user_upload_rel,
 )
-from utils.file_parser import read_file  # 导入文件解析函数
+from utils.file_parser import read_file
 
-
-router = APIRouter(prefix="", tags=["文件与知识库"])  # 创建无前缀的路由，归类为“文件与知识库”
+router = APIRouter(prefix="", tags=["文件与知识库"])
 
 MAX_FILE_SIZE = 20 * 1024 * 1024  # 单文件最大 20MB
 STREAM_CHUNK_SIZE = 1024 * 1024  # 分块读取大小 1MB
 MAX_TEXT_LENGTH = 1024 * 1024  # 手动录入文本最大 1MB
-INVALID_FILENAME_CHARS = re.compile(r'[\\/:*?"<>|\r\n]')  # 文件名中的非法字符正则
+INVALID_FILENAME_CHARS = re.compile(r'[\\/:*?"<>|\r\n]')
 
 
-class TextUpload(BaseModel):  # 定义文本录入请求体
-    # 手动粘贴文本的请求体
-    doc_name: str = Field(..., min_length=1, max_length=200)  # 文档名称，必填且长度 1-200
-    text_content: str = Field(..., min_length=1, max_length=MAX_TEXT_LENGTH)  # 文本内容，必填且限长
-    category: str = Field(DEFAULT_CATEGORY, min_length=1, max_length=50)  # 分组，默认分组
+def _scope_owner(current: dict) -> str | None:
+    """普通用户只看自己的知识库；管理员查看全站。"""
+    if current.get("role") == "admin":
+        return None
+    return current.get("username") or "guest"
 
 
-def _safe_filename(name: str) -> str:  # 定义文件名清洗函数
-    # 清洗文件名，阻止路径穿越和非法字符
-    safe = os.path.basename((name or "").strip())  # 只保留路径中的文件名部分，阻止路径穿越
-    if not safe or safe in {".", ".."} or INVALID_FILENAME_CHARS.search(safe):  # 文件名为空、特殊值或含非法字符
-        raise HTTPException(status_code=400, detail="文件名不合法")  # 返回 400 错误
-    return safe  # 返回安全文件名
+def _find_file(name: str, owner: str | None) -> dict | None:
+    return next((item for item in get_all_files(owner=owner) if item["name"] == name), None)
 
 
-@router.post("/upload")  # 注册 POST /upload 接口
-async def upload_file(file: UploadFile = File(...), category: str = Form(DEFAULT_CATEGORY)):  # 定义文件上传函数
-    # 上传文件：先保存临时文件，再解析文本、切分并写入向量库
-    filename = _safe_filename(file.filename)  # 清洗上传文件名
-    category = (category or DEFAULT_CATEGORY).strip() or DEFAULT_CATEGORY  # 清洗分组名，缺省用默认分组
-    write_log(f"开始上传：{filename}")  # 记录上传开始日志
-    suffix = os.path.splitext(filename)[1].lower()  # 提取小写文件后缀
-    if suffix not in SUPPORTED_SUFFIXES:  # 文件类型不支持
-        raise HTTPException(status_code=400, detail="仅支持pdf/txt/docx/md/xlsx/xls")  # 返回 400 错误
+class TextUpload(BaseModel):
+    """手动粘贴文本入库的请求体。"""
 
-    tmp_path = os.path.join(UPLOAD_PATH, f".{uuid.uuid4().hex}.part")  # 生成临时文件路径
-    size = 0  # 初始化已接收字节数
-    try:  # 捕获上传异常
-        # 分块接收文件，限制单文件大小
-        with open(tmp_path, "wb") as f:  # 以二进制写模式打开临时文件
-            while True:  # 循环读取文件块
-                chunk = await file.read(STREAM_CHUNK_SIZE)  # 异步读取一块数据
-                if not chunk:  # 已读完
-                    break  # 结束循环
-                size += len(chunk)  # 累加字节数
-                if size > MAX_FILE_SIZE:  # 超过大小限制
-                    raise HTTPException(status_code=413, detail="文件过大，最大支持20MB")  # 返回 413 错误
-                f.write(chunk)  # 写入临时文件
-
-        try:  # 尝试解析文件
-            text = read_file(tmp_path, suffix)  # 按后缀解析文件文本
-        except Exception as exc:  # 解析失败
-            write_log(f"文件解析失败：{filename}，{exc}")  # 记录解析失败日志
-            raise HTTPException(status_code=400, detail="文件解析失败，请检查文件是否损坏") from exc  # 返回 400 错误
-        if not text:  # 文件没有有效文本
-            raise HTTPException(status_code=400, detail="文件无有效文本")  # 返回 400 错误
-
-        chunk_num = file_to_vector(filename, text, category)  # 切分文本并写入向量库
-        set_file_category(filename, category)  # 保存文件分组元数据
-        # 解析成功后再把临时文件移动到正式目录
-        os.replace(tmp_path, os.path.join(UPLOAD_PATH, filename))  # 用正式文件名替换临时文件
-    except Exception:  # 任意异常
-        if os.path.exists(tmp_path):  # 临时文件存在
-            os.remove(tmp_path)  # 删除临时文件
-        raise  # 继续抛出原异常
-    write_log(f"文档入库成功：{filename}，切片数量：{chunk_num}")  # 记录入库成功日志
-    return {"code": 200, "msg": "文档入库成功", "filename": filename, "chunk_num": chunk_num}  # 返回入库结果
+    doc_name: str = Field(..., min_length=1, max_length=200)
+    text_content: str = Field(..., min_length=1, max_length=MAX_TEXT_LENGTH)
+    category: str = Field(DEFAULT_CATEGORY, min_length=1, max_length=50)
 
 
-@router.get("/kb/list")  # 注册 GET /kb/list 接口
-def kb_list(  # 定义文件列表查询函数
-    page: int = Query(1, ge=1),  # 页码，最小为 1
-    page_size: int = Query(20, ge=1, le=100),  # 每页条数，范围 1-100
-    category: str | None = Query(None),  # 分组过滤，可选
+def _safe_filename(name: str) -> str:
+    """清洗文件名，只保留 basename 并过滤非法字符，阻止路径穿越。"""
+    safe = os.path.basename((name or "").strip())
+    if not safe or safe in {".", ".."} or INVALID_FILENAME_CHARS.search(safe):
+        raise HTTPException(status_code=400, detail="文件名不合法")
+    return safe
+
+
+@router.post("/upload")
+def upload_file(
+    file: UploadFile = File(...),
+    category: str = Form(DEFAULT_CATEGORY),
+    current: dict = Depends(require_auth),
 ):
-    # 分页返回知识库文件列表及每个文件的切片数
-    files = get_all_files(category=category)  # 获取文件列表，可按分组过滤
-    total = len(files)  # 计算文件总数
-    start = (page - 1) * page_size  # 计算本页起始下标
-    return {  # 返回分页结果
-        "file_list": files[start:start + page_size],  # 本页文件列表
-        "total": total,  # 文件总数
-        "page": page,  # 当前页码
-        "page_size": page_size,  # 每页条数
-        "category": category,  # 当前分组过滤
+    """上传文件：先写临时文件，再解析文本、切分并写入向量库，成功后才转正。"""
+    filename = _safe_filename(file.filename)
+    category = (category or DEFAULT_CATEGORY).strip() or DEFAULT_CATEGORY
+    owner = current.get("username") or "guest"
+    storage = user_upload_rel(owner, filename)
+    upload_dir = user_upload_dir(owner)
+    os.makedirs(upload_dir, exist_ok=True)
+    write_log(f"开始上传：{filename}（{owner}）")
+    suffix = os.path.splitext(filename)[1].lower()
+    if suffix not in SUPPORTED_SUFFIXES:
+        raise HTTPException(status_code=400, detail="仅支持pdf/txt/docx/doc/md/xlsx/xls/json")
+
+    tmp_path = os.path.join(upload_dir, f".{uuid.uuid4().hex}.part")
+    size = 0
+    try:
+        # 同步路由由 FastAPI 放入线程池执行，这里同步读取底层文件并限制单文件大小
+        with open(tmp_path, "wb") as f:
+            while True:
+                chunk = file.file.read(STREAM_CHUNK_SIZE)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_FILE_SIZE:
+                    raise HTTPException(status_code=413, detail="文件过大，最大支持20MB")
+                f.write(chunk)
+
+        try:
+            text = read_file(tmp_path, suffix)
+        except Exception as exc:
+            write_log(f"文件解析失败：{filename}，{exc}")
+            raise HTTPException(status_code=400, detail="文件解析失败，请检查文件是否损坏") from exc
+        if not text:
+            raise HTTPException(status_code=400, detail="文件无有效文本")
+
+        chunk_num = file_to_vector(filename, text, category, owner=owner, storage=storage)
+        set_file_meta(storage, category=category, owner=owner, display_name=filename)
+        # 解析与入库成功后再把临时文件转正，避免失败时污染知识库
+        os.replace(tmp_path, os.path.join(upload_dir, filename))
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
+    write_log(f"文档入库成功：{storage}，切片数量：{chunk_num}")
+    return {"code": 200, "msg": "文档入库成功", "filename": filename, "chunk_num": chunk_num}
+
+
+@router.get("/kb/list")
+def kb_list(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    category: str | None = Query(None),
+    current: dict = Depends(require_auth),
+):
+    """分页返回知识库文件列表及每个文件的切片数，可按分组过滤。"""
+    files = get_all_files(category=category, owner=_scope_owner(current))
+    total = len(files)
+    start = (page - 1) * page_size
+    return {
+        "file_list": files[start:start + page_size],
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "category": category,
     }
 
 
-@router.get("/kb/categories")  # 注册 GET /kb/categories 接口
-def kb_categories():  # 定义分组汇总函数
-    # 汇总所有文档的分类及数量，供前端分组筛选
-    counts = {}  # 保存分组名到数量的映射
-    for item in get_all_files():  # 遍历全部文件
-        name = item.get("category") or DEFAULT_CATEGORY  # 取分组名，缺失时用默认分组
-        counts[name] = counts.get(name, 0) + 1  # 累加数量
-    return {  # 返回分组列表
-        "categories": [  # 分组数组
-            {"name": name, "count": count}  # 每个分组包含名称和数量
-            for name, count in sorted(counts.items(), key=lambda x: x[0])  # 按名称排序
+@router.get("/kb/categories")
+def kb_categories(current: dict = Depends(require_auth)):
+    """汇总所有文档的分组及数量，供前端分组筛选。"""
+    counts = {}
+    for item in get_all_files(owner=_scope_owner(current)):
+        name = item.get("category") or DEFAULT_CATEGORY
+        counts[name] = counts.get(name, 0) + 1
+    return {
+        "categories": [
+            {"name": name, "count": count}
+            for name, count in sorted(counts.items(), key=lambda x: x[0])
         ]
     }
 
 
-@router.get("/kb/preview")  # 注册 GET /kb/preview 接口
-def kb_preview(filename: str = Query(..., min_length=1, max_length=255)):  # 定义文件预览函数
-    # 返回文档提取后的纯文本，供前端预览和溯源跳转
-    safe_name = _safe_filename(filename)  # 清洗文件名
-    path = os.path.join(UPLOAD_PATH, safe_name)  # 拼接完整路径
-    suffix = os.path.splitext(safe_name)[1].lower()  # 提取小写后缀
-    if not os.path.isfile(path) or suffix not in SUPPORTED_SUFFIXES:  # 文件不存在或类型不支持
-        raise HTTPException(status_code=404, detail="文件不存在")  # 返回 404 错误
-    text = read_file(path, suffix)  # 解析文件文本
-    info = next((f for f in get_all_files() if f["name"] == safe_name), {})  # 在文件列表中查找该文件信息
-    return {  # 返回预览数据
-        "filename": safe_name,  # 文件名
-        "category": get_file_category(safe_name),  # 分组
-        "size": os.path.getsize(path),  # 文件大小
-        "chunk_num": info.get("chunk_num", 0),  # 切片数量
-        "text": text,  # 文件文本
-    }
-
-
-@router.get("/kb/test")  # 注册 GET /kb/test 接口
-def kb_test(  # 定义检索测试函数
-    question: str = Query(..., min_length=1, max_length=2000),  # 测试问题，必填且限长
-    top_k: int = Query(3, ge=1, le=10),  # 召回数量，范围 1-10
-    category: str | None = Query(None),  # 分组过滤，可选
+@router.get("/kb/preview")
+def kb_preview(
+    filename: str = Query(..., min_length=1, max_length=255),
+    current: dict = Depends(require_auth),
 ):
-    # 检索测试器：只召回不问答，方便查看命中片段、相似度和 BM25 得分
-    try:  # 捕获检索异常
-        hits = hybrid_search(question, top_k, category)  # 执行混合检索
-        results = []  # 保存测试结果
-        for hit in hits:  # 遍历命中结果
-            results.append({  # 组装单条结果
-                "text": hit["document"],  # 命中文本
-                "filename": hit.get("filename") or "未知来源",  # 来源文件名
-                "chunk_index": hit.get("chunk_index") or -1,  # 片段序号
-                "category": hit.get("category") or DEFAULT_CATEGORY,  # 分组
-                "similarity": hit.get("similarity"),  # 相似度
-                "bm25_score": hit.get("bm25_score"),  # BM25 得分
-            })
-        return {"results": results}  # 返回检索结果
-    except Exception as exc:  # 检索异常
-        write_log(f"检索测试失败：{exc}")  # 记录失败日志
-        raise HTTPException(status_code=500, detail=f"检索失败：{exc}") from exc  # 返回 500 错误
-
-
-@router.delete("/kb/delete", dependencies=[Depends(require_admin)])  # 注册 DELETE /kb/delete 接口，仅管理员可调用
-def kb_delete(filename: str = Query(..., min_length=1, max_length=255)):  # 定义删除文件函数
-    # 删除单个文件：先删向量，再删磁盘文件
-    safe_name = _safe_filename(filename)  # 清洗文件名
-    path = os.path.join(UPLOAD_PATH, safe_name)  # 拼接完整路径
-    has_file = os.path.isfile(path)  # 判断磁盘文件是否存在
-    ok = delete_file_vectors(safe_name)  # 删除该文件的所有向量
-    if not ok and not has_file:  # 向量和磁盘文件都不存在
-        raise HTTPException(status_code=404, detail="文件不存在")  # 返回 404 错误
-    if has_file:  # 磁盘文件存在
-        os.remove(path)  # 删除磁盘文件
-    remove_file_meta(safe_name)  # 删除元数据记录
-    return {"msg": f"{safe_name} 删除完成"}  # 返回删除完成提示
-
-
-@router.delete("/kb/clear_all", dependencies=[Depends(require_admin)])  # 注册 DELETE /kb/clear_all 接口，仅管理员可调用
-def kb_clear():  # 定义清空知识库函数
-    # 清空向量库和磁盘上的全部文档
-    clear_all_vector()  # 清空向量库
-    clear_file_meta()  # 清空文件元数据
-    for name in os.listdir(UPLOAD_PATH):  # 遍历上传目录
-        path = os.path.join(UPLOAD_PATH, name)  # 拼接完整路径
-        if os.path.isfile(path) and os.path.splitext(name)[1].lower() in SUPPORTED_SUFFIXES:  # 是支持的文件
-            os.remove(path)  # 删除文件
-    return {"msg": "全部知识库已清空"}  # 返回清空完成提示
-
-
-@router.post("/kb/reindex", dependencies=[Depends(require_admin)])  # 注册 POST /kb/reindex 接口，仅管理员可调用
-def kb_reindex():  # 定义重建索引函数
-    """按当前切片配置重建全部文档向量，使切片大小/重叠修改立即生效。"""  # 函数说明文档
-    # 读取 data 目录下所有支持的文件，逐个重新解析并入库
-    if not os.path.isdir(UPLOAD_PATH):  # 上传目录不存在
-        return {"msg": "知识库为空", "files": 0, "chunks": 0, "failed": []}  # 返回空结果
-    files = sorted(  # 排序文件列表
-        name  # 文件名
-        for name in os.listdir(UPLOAD_PATH)  # 遍历上传目录
-        if os.path.isfile(os.path.join(UPLOAD_PATH, name))  # 只保留文件
-        and os.path.splitext(name)[1].lower() in SUPPORTED_SUFFIXES  # 且后缀受支持
-    )
-    if not files:  # 没有可重建的文件
-        return {"msg": "知识库为空", "files": 0, "chunks": 0, "failed": []}  # 返回空结果
-
-    total_chunks = 0  # 累计切片数量
-    ok = 0  # 成功文件数
-    failed = []  # 失败文件列表
-    for name in files:  # 遍历每个文件
-        path = os.path.join(UPLOAD_PATH, name)  # 拼接完整路径
-        suffix = os.path.splitext(name)[1].lower()  # 提取小写后缀
-        try:  # 捕获单文件异常
-            text = read_file(path, suffix)  # 解析文件文本
-            if not text.strip():  # 文件为空
-                failed.append(name)  # 记入失败列表
-                write_log(f"重建索引跳过空文档：{name}")  # 记录跳过日志
-                continue  # 处理下一个文件
-            total_chunks += file_to_vector(name, text, get_file_category(name))  # 重新入库并累加切片数
-            ok += 1  # 成功数加一
-        except Exception as exc:  # 解析或入库异常
-            failed.append(name)  # 记入失败列表
-            write_log(f"重建索引失败 {name}：{exc}")  # 记录失败日志
-    write_log(f"重建索引完成：成功 {ok} 个文件，共 {total_chunks} 段")  # 记录完成日志
-    return {  # 返回重建结果
-        "msg": f"重建完成，成功 {ok} 个文件，共 {total_chunks} 段",  # 结果提示
-        "files": ok,  # 成功文件数
-        "chunks": total_chunks,  # 总切片数
-        "failed": failed,  # 失败文件列表
+    """返回文档提取后的纯文本，供前端预览与溯源跳转。"""
+    safe_name = _safe_filename(filename)
+    info = _find_file(safe_name, _scope_owner(current))
+    if not info:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    path = storage_to_abs(info["storage"])
+    suffix = os.path.splitext(safe_name)[1].lower()
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="文件不存在")
+    text = read_file(path, suffix)
+    return {
+        "filename": safe_name,
+        "category": info.get("category") or DEFAULT_CATEGORY,
+        "size": os.path.getsize(path),
+        "chunk_num": info.get("chunk_num", 0),
+        "text": text,
     }
 
 
-@router.post("/upload_text")  # 注册 POST /upload_text 接口
-async def upload_text(payload: TextUpload):  # 定义文本录入函数
-    # 手动粘贴文本入库：自动补 .txt/.md 后缀后走同样的切分入库流程
-    doc_name = _safe_filename(payload.doc_name)  # 清洗文档名称
-    category = (payload.category or DEFAULT_CATEGORY).strip() or DEFAULT_CATEGORY  # 清洗分组名
-    base, ext = os.path.splitext(doc_name)  # 拆分文件名和后缀
-    if ext.lower() not in (".txt", ".md"):  # 后缀不是文本格式
-        doc_name = doc_name + ".txt"  # 自动补 .txt 后缀
-    content = payload.text_content.strip()  # 去除文本内容首尾空白
-    if not content:  # 文本为空
-        raise HTTPException(status_code=400, detail="文本内容不能为空")  # 返回 400 错误
+def kb_test(
+    question: str,
+    top_k: int = 3,
+    category: str | None = None,
+    owner: str | None = None,
+):
+    """检索测试器：只召回不问答，展示命中片段、相似度、BM25 与精排分数。"""
+    try:
+        cfg = get_config()
+        use_rerank = bool(cfg.get("rerank_enabled", False))
+        rerank_top_k = cfg.get("rerank_top_k", top_k)
+        hits = (
+            hybrid_search_with_rerank(
+                question, top_k, category, use_rerank, rerank_top_k, owner=owner
+            )
+            if owner
+            else hybrid_search_with_rerank(question, top_k, category, use_rerank, rerank_top_k)
+        )
+        results = []
+        for hit in hits:
+            results.append(
+                {
+                    "text": hit["document"],
+                    "filename": hit.get("filename") or "未知来源",
+                    "chunk_index": hit.get("chunk_index") if hit.get("chunk_index") is not None else -1,
+                    "category": hit.get("category") or DEFAULT_CATEGORY,
+                    "similarity": hit.get("similarity"),
+                    "bm25_score": hit.get("bm25_score"),
+                    "rerank_score": hit.get("rerank_score"),
+                }
+            )
+        return {"results": results}
+    except Exception as exc:
+        write_log(f"检索测试失败：{exc}")
+        raise HTTPException(status_code=500, detail=f"检索失败：{exc}") from exc
 
-    tmp_path = os.path.join(UPLOAD_PATH, f".{uuid.uuid4().hex}.part")  # 生成临时文件路径
-    try:  # 捕获录入异常
-        with open(tmp_path, "w", encoding="utf-8") as f:  # 以 UTF-8 写入临时文件
-            f.write(content)  # 写入文本内容
-        chunk_num = file_to_vector(doc_name, content, category)  # 切分并写入向量库
-        set_file_category(doc_name, category)  # 保存分组元数据
-        os.replace(tmp_path, os.path.join(UPLOAD_PATH, doc_name))  # 临时文件改名为正式文件
-    except Exception:  # 任意异常
-        if os.path.exists(tmp_path):  # 临时文件存在
-            os.remove(tmp_path)  # 删除临时文件
-        raise  # 继续抛出原异常
-    write_log(f"文本文档入库，名称：{doc_name}，切片数量：{chunk_num}")  # 记录入库日志
-    return {"code": 200, "msg": "文本录入成功", "filename": doc_name, "chunk_num": chunk_num}  # 返回录入结果
+
+@router.get("/kb/test")
+def kb_test_route(
+    question: str = Query(..., min_length=1, max_length=2000),
+    top_k: int = Query(3, ge=1, le=10),
+    category: str | None = Query(None),
+    current: dict = Depends(require_auth),
+):
+    """带登录态的检索测试接口。"""
+    return kb_test(question, top_k, category, owner=_scope_owner(current))
+
+
+@router.delete("/kb/delete")
+def kb_delete(
+    filename: str = Query(..., min_length=1, max_length=255),
+    current: dict = Depends(require_auth),
+):
+    """删除单个文件：普通用户只能删自己的，管理员可删全站。"""
+    safe_name = _safe_filename(filename)
+    info = _find_file(safe_name, _scope_owner(current))
+    if not info:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    path = storage_to_abs(info["storage"])
+    has_file = os.path.isfile(path)
+    ok = delete_file_vectors(
+        storage=info["storage"],
+        filename=info["name"],
+        owner=info.get("owner"),
+    )
+    if not ok and not has_file:
+        raise HTTPException(status_code=404, detail="文件不存在")
+    if has_file:
+        os.remove(path)
+    remove_file_meta(info["storage"])
+    delete_graph_cache(safe_name, owner=info.get("owner"))
+    return {"msg": f"{safe_name} 删除完成"}
+
+
+@router.delete("/kb/clear_all")
+def kb_clear(current: dict = Depends(require_auth)):
+    """清空知识库：普通用户清空自己的，管理员清空全站。"""
+    is_admin = current.get("role") == "admin"
+    owner = None if is_admin else current.get("username")
+    files = get_all_files(owner=owner)
+    for item in files:
+        delete_file_vectors(
+            storage=item["storage"],
+            filename=item["name"],
+            owner=item.get("owner"),
+        )
+        path = storage_to_abs(item["storage"])
+        if os.path.isfile(path):
+            os.remove(path)
+        remove_file_meta(item["storage"])
+        delete_graph_cache(item["name"], owner=item.get("owner"))
+    clear_graph_cache(owner=None if is_admin else current.get("username"))
+    if is_admin:
+        clear_file_meta()
+    else:
+        clear_file_meta(owner=current.get("username"))
+    return {"msg": "全部知识库已清空" if is_admin else "我的知识库已清空"}
+
+
+@router.post("/kb/reindex")
+def kb_reindex(current: dict = Depends(require_auth)):
+    """按当前切片配置重建文档向量：普通用户重建自己的，管理员重建全站。"""
+    files = get_all_files(owner=_scope_owner(current))
+    if not files:
+        return {"msg": "知识库为空", "files": 0, "chunks": 0, "failed": []}
+
+    total_chunks = 0
+    ok = 0
+    failed = []
+    for item in files:
+        path = storage_to_abs(item["storage"])
+        suffix = os.path.splitext(item["storage"])[1].lower()
+        try:
+            text = read_file(path, suffix)
+            if not text.strip():
+                failed.append(item["name"])
+                write_log(f"重建索引跳过空文档：{item['storage']}")
+                continue
+            total_chunks += file_to_vector(
+                item["name"],
+                text,
+                item.get("category") or DEFAULT_CATEGORY,
+                owner=item.get("owner"),
+                storage=item["storage"],
+            )
+            ok += 1
+        except Exception as exc:
+            failed.append(item["name"])
+            write_log(f"重建索引失败 {item['storage']}：{exc}")
+    write_log(f"重建索引完成：成功 {ok} 个文件，共 {total_chunks} 段")
+    return {
+        "msg": f"重建完成，成功 {ok} 个文件，共 {total_chunks} 段",
+        "files": ok,
+        "chunks": total_chunks,
+        "failed": failed,
+    }
+
+
+@router.post("/upload_text")
+def upload_text(payload: TextUpload, current: dict = Depends(require_auth)):
+    """手动粘贴文本入库：自动补 .txt/.md 后缀后走同样的切分入库流程。"""
+    doc_name = _safe_filename(payload.doc_name)
+    category = (payload.category or DEFAULT_CATEGORY).strip() or DEFAULT_CATEGORY
+    owner = current.get("username") or "guest"
+    storage = user_upload_rel(owner, doc_name)
+    upload_dir = user_upload_dir(owner)
+    os.makedirs(upload_dir, exist_ok=True)
+    ext = os.path.splitext(doc_name)[1]
+    if ext.lower() not in (".txt", ".md"):
+        doc_name = doc_name + ".txt"
+        storage = user_upload_rel(owner, doc_name)
+    content = payload.text_content.strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="文本内容不能为空")
+
+    tmp_path = os.path.join(upload_dir, f".{uuid.uuid4().hex}.part")
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        chunk_num = file_to_vector(doc_name, content, category, owner=owner, storage=storage)
+        set_file_meta(storage, category=category, owner=owner, display_name=doc_name)
+        os.replace(tmp_path, os.path.join(upload_dir, doc_name))
+    except Exception:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise
+    write_log(f"文本文档入库，名称：{doc_name}，切片数量：{chunk_num}")
+    return {"code": 200, "msg": "文本录入成功", "filename": doc_name, "chunk_num": chunk_num}

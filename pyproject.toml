@@ -1,3 +1,13 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+# B008: FastAPI 依赖注入（Depends/File/Query 等）在默认参数中调用是框架惯用法
+# BLE001: 项目对外部依赖（模型/LLM/DB）采取"捕获异常优雅降级"设计，属有意行为
+# TRY004: 配置校验统一抛 ValueError 以匹配 API 层的 400 语义，不用 TypeError
+ignore = ["B008", "BLE001", "TRY004"]

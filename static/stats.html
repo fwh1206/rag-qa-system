@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>数据统计 · 智答工作台</title>
+    <link rel="stylesheet" href="/static/css/app.css">
+    <script src="/static/vendor/chart.umd.min.js"></script>
+</head>
+<body data-page="stats">
+    <nav class="topnav"></nav>
+
+    <div class="app-body">
+        <main class="main">
+            <div class="page">
+                <div class="page-header">
+                    <div>
+                        <h1>数据统计</h1>
+                        <p>系统运行概况：知识库规模、对话量与最近使用情况。</p>
+                    </div>
+                    <div class="header-meta">
+                        <span class="status-pill"><span class="status-dot"></span><span id="overviewStatus">系统运行中</span></span>
+                    </div>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card accent">
+                        <div class="stat-label">知识库文档</div>
+                        <div class="stat-value" id="stFiles">-</div>
+                        <div class="stat-sub" id="stCategories">-</div>
+                    </div>
+                    <div class="stat-card accent">
+                        <div class="stat-label">向量片段</div>
+                        <div class="stat-value" id="stChunks">-</div>
+                        <div class="stat-sub">已切分的检索单元</div>
+                    </div>
+                    <div class="stat-card green">
+                        <div class="stat-label">累计对话</div>
+                        <div class="stat-value" id="stChats">-</div>
+                        <div class="stat-sub" id="stSessions">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">注册用户</div>
+                        <div class="stat-value" id="stUsers">-</div>
+                        <div class="stat-sub" id="stLastChat">-</div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-head">
+                        <span>近 7 日对话趋势</span>
+                        <span class="panel-count" id="trendTotal">-</span>
+                    </div>
+                    <div class="card-body chart-card-body">
+                        <div class="chart-wrap">
+                            <canvas id="trendChart" role="img" aria-label="近 7 日对话趋势"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-head">
+                        <span>最近对话</span>
+                        <a class="text-link" href="/history">查看全部</a>
+                    </div>
+                    <div class="card-body" style="padding:0" id="recentList">
+                        <div class="empty-block">加载中…</div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/js/common.js"></script>
+    <script>
+        const $ = (id) => document.getElementById(id);
+
+        async function loadStats() {
+            const data = await api("/stats/overview");
+            $("stFiles").textContent = data.files;
+            $("stCategories").textContent = "覆盖 " + data.categories + " 个分组";
+            $("stChunks").textContent = data.chunks;
+            $("stChats").textContent = data.chats;
+            $("stSessions").textContent = "分布于 " + data.sessions + " 个会话";
+            $("stUsers").textContent = data.users;
+            $("stLastChat").textContent = data.last_chat_at ? "最近 " + formatTime(data.last_chat_at) : "暂无对话";
+            $("overviewStatus").textContent = data.last_chat_at ? "最近对话 " + formatTime(data.last_chat_at) : "暂无对话";
+        }
+
+        async function loadRecent() {
+            const data = await api("/stats/recent?limit=10");
+            const items = data.items || [];
+            if (!items.length) {
+                $("recentList").innerHTML = '<div class="empty-block">暂无对话记录，去对话工作台试试吧。</div>';
+                return;
+            }
+            $("recentList").innerHTML = items.map((it) =>
+                '<a class="history-item" style="text-decoration:none" href="/?session=' + encodeURIComponent(it.session_id) + '">' +
+                '<div class="history-q">' + escapeHtml(it.question) + '</div>' +
+                '<div class="history-a">' + escapeHtml(it.answer || "") + '</div>' +
+                '<div class="history-meta">' +
+                '<span class="session-tag">' + escapeHtml(it.session_id) + '</span>' +
+                '<span>' + formatTime(it.created_at) + '</span>' +
+                '</div></a>'
+            ).join("");
+        }
+
+        async function loadTrend() {
+            const data = await api("/stats/trend?days=7");
+            $("trendTotal").textContent = "累计 " + data.total + " 条";
+            if (!window.Chart || !$("trendChart")) return;
+            const ctx = $("trendChart").getContext("2d");
+            if (!ctx) return;
+            new Chart(ctx, {
+                type: "bar",
+                data: {
+                    labels: data.labels,
+                    datasets: [{
+                        label: "对话量",
+                        data: data.values,
+                        backgroundColor: "rgba(15, 118, 110, 0.72)",
+                        borderColor: "#0f766e",
+                        borderWidth: 1,
+                        borderRadius: 4,
+                        maxBarThickness: 42
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: "#182120",
+                            titleColor: "#ffffff",
+                            bodyColor: "#e5e7eb",
+                            padding: 10,
+                            cornerRadius: 6,
+                            displayColors: false
+                        }
+                    },
+                    scales: {
+                        x: { grid: { display: false }, ticks: { color: "#71807c" } },
+                        y: {
+                            beginAtZero: true,
+                            ticks: { precision: 0, color: "#71807c" },
+                            grid: { color: "rgba(203, 213, 209, 0.4)" }
+                        }
+                    }
+                }
+            });
+        }
+
+        document.addEventListener("DOMContentLoaded", async function () {
+            try {
+                await requireAuth("/login");
+                await Promise.all([loadStats(), loadRecent(), loadTrend()]);
+            } catch (e) {
+                toast(e.message, "error");
+            }
+        });
+    </script>
+</body>
+</html>

@@ -11,6 +11,20 @@ def test_tokenize_keeps_non_empty_tokens():
     assert all(token.strip() for token in tokens)
 
 
+def test_iter_disk_files_excludes_metadata_json(monkeypatch, tmp_path):
+    monkeypatch.setattr(rag, "UPLOAD_PATH", str(tmp_path))
+    (tmp_path / "file_meta.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "eval_set.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "eval_report.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "real_doc.json").write_text("{}", encoding="utf-8")
+
+    keys = [storage for storage, _path, _suffix in rag._iter_disk_files()]
+    assert "file_meta.json" not in keys
+    assert "eval_set.json" not in keys
+    assert "eval_report.json" not in keys
+    assert "real_doc.json" in keys
+
+
 def test_bm25_search_category_filter(monkeypatch):
     index = BM25Okapi([["苹果", "价格"], ["香蕉", "产地"]])
     texts = ["苹果价格", "香蕉产地"]

@@ -2,7 +2,7 @@
 
 import hashlib
 import secrets
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from fastapi import Header, HTTPException
 
@@ -12,6 +12,7 @@ from core.database import (
     delete_auth_token,
     get_auth_token,
     get_user,
+    get_user_by_email,
     purge_expired_tokens,
     verify_password,
 )
@@ -23,7 +24,7 @@ def _hash_token(token: str) -> str:
 
 def create_token(username: str, role: str = "user") -> str:
     token = secrets.token_hex(32)
-    expires_at = datetime.utcnow() + timedelta(seconds=AUTH_TOKEN_TTL)
+    expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(seconds=AUTH_TOKEN_TTL)
     create_auth_token(_hash_token(token), username, role, expires_at)
     return token
 
@@ -45,10 +46,11 @@ def revoke_token(token: str):
 def login(username: str, password: str):
     """优先校验 MySQL 用户表，再兼容默认管理员账号。"""
     purge_expired_tokens()
-    user = get_user(username)
+    account = username.strip().lower()
+    user = get_user(account) or get_user_by_email(account)
     if user and verify_password(password, user["password_hash"]):
         return create_token(user["username"], user["role"])
-    if not user and username == AUTH_USERNAME and password == AUTH_PASSWORD:
+    if not user and account == AUTH_USERNAME and password == AUTH_PASSWORD:
         return create_token(username, "admin")
     return None
 

@@ -8,21 +8,27 @@ from pydantic import BaseModel, Field
 
 from config.rag_config import build_prompt, get_config
 from core.auth import require_auth
-from core.database import load_chat_memory, require_session_access, save_chat_record
-from core.llm_client import llm_chat, llm_chat_stream
+from core.database import get_user_llm_config, load_chat_memory, require_session_access, save_chat_record
+from core.llm_client import llm_chat, llm_chat_stream, resolve_user_llm_config
 from core.logger import write_log
 from core.query_rewrite import rewrite_query
-from core.rag_engine import bm25_search, hybrid_search
-
+from core.rag_engine import bm25_search, hybrid_search_with_rerank
 
 router = APIRouter(prefix="", tags=["对话问答"])
 
+
+def _user_llm_config(username: str | None) -> dict | None:
+    """加载当前用户的私有模型配置；未启用时返回 None 使用系统默认模型。"""
+    if not username:
+        return None
+    return resolve_user_llm_config(get_user_llm_config(username))
+
 MAX_QUESTION_LENGTH = 2000
-NO_CONTEXT_ANSWER = "知识库中未找到相关内容，请换个问法或先上传相关文档。"
+NO_CONTEXT_ANSWER = "这个我暂时没找到相关资料，换个问法试试，或者先上传相关文档？"
 GENERAL_PROMPT = (
-    "你是一个自然、有分寸的中文对话助手。用户可能在聊生活、想法或各类普通话题。"
-    "请结合历史对话，用自然、清晰、有条理的中文回复；"
-    "不要提及知识库、检索或参考资料，除非用户主动问起。\n"
+    "你在和一位朋友聊天。他用中文和你说话，你就用自然、随和的中文回应，"
+    "像正常聊天一样，别端着，别用'作为AI助手'这类腔调。"
+    "能答就好好答，不知道就直说不知道。\n"
     "历史对话：{history}\n"
     "用户消息：{question}\n"
 )
@@ -37,17 +43,32 @@ class ChatRequest(BaseModel):
     mode: str = Field("auto", pattern="^(auto|rag|chat)$")
 
 
-def _retrieve(question: str, top_k: int, category: str | None = None):
-    """混合召回后按相似度阈值过滤；BM25 命中的片段保留，弥补语义阈值误杀。"""
-    threshold = get_config()["similarity_threshold"]
+def _retrieve(
+    question: str,
+    top_k: int,
+    category: str | None = None,
+    use_rerank: bool = False,
+    owner: str | None = None,
+):
+    """混合召回（可选精排）后按相似度阈值过滤；BM25 命中的片段保留，弥补语义阈值误杀。"""
+    cfg = get_config()
+    threshold = cfg["similarity_threshold"]
+    rerank_top_k = cfg.get("rerank_top_k", top_k)
     valid_context = []
     source_info = []
-    for hit in hybrid_search(question, top_k, category):
+    hits = (
+        hybrid_search_with_rerank(question, top_k, category, use_rerank, rerank_top_k, owner=owner)
+        if owner
+        else hybrid_search_with_rerank(question, top_k, category, use_rerank, rerank_top_k)
+    )
+    for hit in hits:
         sim = hit.get("similarity")
         if sim is not None and sim < threshold and hit.get("bm25_score") is None:
             continue
         filename = hit.get("filename") or "未知来源"
-        chunk_index = hit.get("chunk_index") or -1
+        chunk_index = hit.get("chunk_index")
+        if chunk_index is None:
+            chunk_index = -1
         valid_context.append(hit["document"])
         source_info.append(
             {
@@ -57,6 +78,7 @@ def _retrieve(question: str, top_k: int, category: str | None = None):
                 "category": hit.get("category"),
                 "similarity": sim,
                 "bm25_score": hit.get("bm25_score"),
+                "rerank_score": hit.get("rerank_score"),
             }
         )
         write_log(f"命中片段：{filename}#{chunk_index}，相似度 {sim}，BM25 {hit.get('bm25_score')}")
@@ -73,12 +95,12 @@ def _labeled_context(valid_context, source_info) -> str:
 
 def _build_thinking_prompt(q: str, labeled_context: str, memory_context: str) -> str:
     return (
-        "你是一个严谨的智能问答助手。请先不要给出最终答案，而是完成以下思考：\n"
-        "1. 用户问题的真实意图和隐含需求是什么；\n"
-        "2. 参考资料能否覆盖答案，哪些信息可以作为依据，哪些需要结合常识推断；\n"
-        "3. 如果资料不足，缺口在哪里，应该如何向用户说明；\n"
-        "4. 最终回答的结构和关键要点是什么。\n"
-        "要求：简明扼要，使用条目列出，不超过400字。\n"
+        "在回答用户问题之前，先在脑子里过一遍（只输出你的思考过程，不要给最终答案）：\n"
+        "1. 他到底想问什么，有没有隐含的意思；\n"
+        "2. 参考资料够不够回答，哪些能直接用，哪些只能靠猜；\n"
+        "3. 缺什么信息，要不要提醒他；\n"
+        "4. 打算怎么组织回答。\n"
+        "用条目简要写，不超过400字。\n"
         f"历史对话：{memory_context}\n"
         f"参考资料：{labeled_context}\n"
         f"问题：{q}\n"
@@ -131,22 +153,33 @@ def chat(payload: ChatRequest, current: dict = Depends(require_auth)):
     cfg = get_config()
     top_k = payload.top_k or cfg["top_k"]
     temperature = payload.temperature if payload.temperature is not None else cfg["temperature"]
+    user_llm = _user_llm_config(current.get("username"))
+    kb_owner = None if current.get("role") == "admin" else current.get("username")
     write_log(f"用户提问：{q}")
 
     use_general, retrieve_q, memory_context = _resolve_mode(payload, cfg)
     valid_context = []
     source_info = []
+    if (
+        not use_general
+        and payload.mode == "auto"
+        and not bm25_search(retrieve_q, top_k, payload.category, kb_owner)
+    ):
+        use_general = True
     if not use_general:
-        if payload.mode == "auto" and not bm25_search(retrieve_q, top_k, payload.category):
-            use_general = True
-    if not use_general:
-        valid_context, source_info = _retrieve(retrieve_q, top_k, payload.category)
+        valid_context, source_info = _retrieve(
+            retrieve_q,
+            top_k,
+            payload.category,
+            use_rerank=bool(cfg.get("rerank_enabled", False)),
+            owner=kb_owner,
+        )
         if payload.mode == "auto" and not valid_context:
             use_general = True
 
     if use_general:
         prompt = GENERAL_PROMPT.format(history=memory_context, question=q)
-        answer = llm_chat(prompt, temperature)
+        answer = llm_chat(prompt, temperature, user_llm)
         save_chat_record(payload.session_id, q, answer, owner=current.get("username"))
         return {
             "question": q,
@@ -178,7 +211,7 @@ def chat(payload: ChatRequest, current: dict = Depends(require_auth)):
         )
         try:
             thinking = (
-                llm_chat(_build_thinking_prompt(q, thinking_label, memory_context), temperature) or ""
+                llm_chat(_build_thinking_prompt(q, thinking_label, memory_context), temperature, user_llm) or ""
             ).strip()
         except HTTPException as exc:
             write_log(f"思考过程生成失败：{exc}")
@@ -187,7 +220,7 @@ def chat(payload: ChatRequest, current: dict = Depends(require_auth)):
     prompt = _build_answer_prompt(
         q, valid_context, source_info, memory_context, cfg["prompt_template"], thinking
     )
-    answer = llm_chat(prompt, temperature)
+    answer = llm_chat(prompt, temperature, user_llm)
     save_chat_record(payload.session_id, q, answer, thinking=thinking, owner=current.get("username"))
     return {
         "question": q,
@@ -209,16 +242,27 @@ def chat_stream(payload: ChatRequest, current: dict = Depends(require_auth)):
     cfg = get_config()
     top_k = payload.top_k or cfg["top_k"]
     temperature = payload.temperature if payload.temperature is not None else cfg["temperature"]
+    user_llm = _user_llm_config(current.get("username"))
+    kb_owner = None if current.get("role") == "admin" else current.get("username")
     write_log(f"用户提问（流式）：{q}")
 
     use_general, retrieve_q, memory_context = _resolve_mode(payload, cfg)
     valid_context = []
     source_info = []
+    if (
+        not use_general
+        and payload.mode == "auto"
+        and not bm25_search(retrieve_q, top_k, payload.category, kb_owner)
+    ):
+        use_general = True
     if not use_general:
-        if payload.mode == "auto" and not bm25_search(retrieve_q, top_k, payload.category):
-            use_general = True
-    if not use_general:
-        valid_context, source_info = _retrieve(retrieve_q, top_k, payload.category)
+        valid_context, source_info = _retrieve(
+            retrieve_q,
+            top_k,
+            payload.category,
+            use_rerank=bool(cfg.get("rerank_enabled", False)),
+            owner=kb_owner,
+        )
         if payload.mode == "auto" and not valid_context:
             use_general = True
 
@@ -228,7 +272,7 @@ def chat_stream(payload: ChatRequest, current: dict = Depends(require_auth)):
             parts = []
             prompt = GENERAL_PROMPT.format(history=memory_context, question=q)
             try:
-                for token in llm_chat_stream(prompt, temperature):
+                for token in llm_chat_stream(prompt, temperature, user_llm):
                     parts.append(token)
                     yield _sse({"type": "token", "content": token})
             except Exception as exc:
@@ -273,7 +317,7 @@ def chat_stream(payload: ChatRequest, current: dict = Depends(require_auth)):
         thinking = ""
         if thinking_prompt:
             try:
-                for token in llm_chat_stream(thinking_prompt, temperature):
+                for token in llm_chat_stream(thinking_prompt, temperature, user_llm):
                     thinking += token
                     yield _sse({"type": "thinking", "content": token})
             except Exception as exc:
@@ -286,7 +330,7 @@ def chat_stream(payload: ChatRequest, current: dict = Depends(require_auth)):
         )
         parts = []
         try:
-            for token in llm_chat_stream(prompt, temperature):
+            for token in llm_chat_stream(prompt, temperature, user_llm):
                 parts.append(token)
                 yield _sse({"type": "token", "content": token})
         except Exception as exc:

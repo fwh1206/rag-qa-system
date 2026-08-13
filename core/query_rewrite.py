@@ -3,7 +3,6 @@
 from core.llm_client import llm_chat
 from core.logger import write_log
 
-
 REWRITE_PROMPT = (
     "你是对话助手。请把用户最新问题改写成不依赖历史对话、可以独立检索的完整问题。\n"
     "要求：只输出改写后的问题，不要解释；保留专有名词和关键信息；若问题本身已经完整，直接原样输出。\n"

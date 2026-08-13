@@ -3,8 +3,9 @@ uvicorn==0.52.1
 chromadb==1.5.9
 sentence-transformers==5.6.1
 requests==2.34.2
+cryptography==45.0.3
 pymysql==1.2.0
-PyPDF2==3.0.1
+pypdf==6.15.0
 python-docx==1.2.0
 python-multipart==0.0.32
 DBUtils==3.1.2
@@ -14,3 +15,4 @@ xlrd==2.0.2
 python-dotenv==1.2.2
 rank-bm25==0.2.2
 jieba==0.42.1
+pywin32==312; platform_system == "Windows"

@@ -3,7 +3,7 @@
 import hashlib
 import secrets
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pymysql
 from dbutils.pooled_db import PooledDB
@@ -11,7 +11,6 @@ from fastapi import HTTPException
 from pymysql.err import OperationalError
 
 from config.settings import AUTH_PASSWORD, AUTH_USERNAME, DB_CONFIG, DB_POOL_SIZE
-
 
 _pool = None
 _pool_lock = threading.Lock()
@@ -52,11 +51,32 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS users (
                     id INT UNSIGNED NOT NULL AUTO_INCREMENT,
                     username VARCHAR(64) NOT NULL,
+                    email VARCHAR(255) NULL,
                     password_hash VARCHAR(255) NOT NULL,
                     role ENUM('admin', 'user') NOT NULL DEFAULT 'user',
+                    llm_enabled TINYINT(1) NOT NULL DEFAULT 0,
+                    llm_url VARCHAR(512) NULL,
+                    llm_model VARCHAR(128) NULL,
+                    llm_api_key TEXT NULL,
                     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     PRIMARY KEY (id),
-                    UNIQUE KEY uk_username (username)
+                    UNIQUE KEY uk_username (username),
+                    UNIQUE KEY uk_email (email)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """
+            )
+            cur.execute(
+                """
+                CREATE TABLE IF NOT EXISTS email_verify_codes (
+                    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+                    email VARCHAR(255) NOT NULL,
+                    code_hash CHAR(64) NOT NULL,
+                    purpose VARCHAR(32) NOT NULL DEFAULT 'register',
+                    expires_at DATETIME NOT NULL,
+                    used TINYINT(1) NOT NULL DEFAULT 0,
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (id),
+                    KEY idx_email_purpose (email, purpose)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """
             )
@@ -115,6 +135,33 @@ def init_db():
                 cur.execute(
                     "ALTER TABLE chat_history ADD COLUMN created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"
                 )
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA=%s AND TABLE_NAME='users' AND COLUMN_NAME='email'",
+                (DB_CONFIG["database"],),
+            )
+            if cur.fetchone()[0] == 0:
+                cur.execute("ALTER TABLE users ADD COLUMN email VARCHAR(255) NULL AFTER username")
+            cur.execute(
+                "SELECT COUNT(*) FROM information_schema.STATISTICS "
+                "WHERE TABLE_SCHEMA=%s AND TABLE_NAME='users' AND INDEX_NAME='uk_email'",
+                (DB_CONFIG["database"],),
+            )
+            if cur.fetchone()[0] == 0:
+                cur.execute("ALTER TABLE users ADD UNIQUE KEY uk_email (email)")
+            for column, ddl in [
+                ("llm_enabled", "ALTER TABLE users ADD COLUMN llm_enabled TINYINT(1) NOT NULL DEFAULT 0"),
+                ("llm_url", "ALTER TABLE users ADD COLUMN llm_url VARCHAR(512) NULL"),
+                ("llm_model", "ALTER TABLE users ADD COLUMN llm_model VARCHAR(128) NULL"),
+                ("llm_api_key", "ALTER TABLE users ADD COLUMN llm_api_key TEXT NULL"),
+            ]:
+                cur.execute(
+                    "SELECT COUNT(*) FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA=%s AND TABLE_NAME='users' AND COLUMN_NAME=%s",
+                    (DB_CONFIG["database"], column),
+                )
+                if cur.fetchone()[0] == 0:
+                    cur.execute(ddl)
             cur.execute("SELECT COUNT(*) FROM users")
             if int(cur.fetchone()[0]) == 0:
                 cur.execute(
@@ -141,13 +188,19 @@ def verify_password(password: str, stored: str) -> bool:
     return secrets.compare_digest(calc, digest)
 
 
-def create_user(username: str, password: str, role: str = "user") -> bool:
+def create_user(
+    username: str,
+    password: str,
+    role: str = "user",
+    email: str | None = None,
+) -> bool:
     conn = get_db_conn()
     try:
         with conn.cursor() as cur:
+            normalized_email = (email or "").strip().lower() or None
             cur.execute(
-                "INSERT INTO users(username, password_hash, role) VALUES(%s, %s, %s)",
-                (username, hash_password(password), role),
+                "INSERT INTO users(username, email, password_hash, role) VALUES(%s, %s, %s, %s)",
+                (username, normalized_email, hash_password(password), role),
             )
         conn.commit()
         return True
@@ -163,7 +216,7 @@ def get_user(username: str) -> dict | None:
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, username, password_hash, role, created_at FROM users WHERE username=%s",
+                "SELECT id, username, email, password_hash, role, created_at FROM users WHERE username=%s",
                 (username,),
             )
             row = cur.fetchone()
@@ -172,10 +225,76 @@ def get_user(username: str) -> dict | None:
         return {
             "id": row[0],
             "username": row[1],
-            "password_hash": row[2],
-            "role": row[3],
-            "created_at": row[4].isoformat() if row[4] else None,
+            "email": row[2],
+            "password_hash": row[3],
+            "role": row[4],
+            "created_at": row[5].isoformat() if row[5] else None,
         }
+    finally:
+        conn.close()
+
+
+def get_user_by_email(email: str) -> dict | None:
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, username, email, password_hash, role, created_at FROM users WHERE email=%s",
+                (email.strip().lower(),),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "username": row[1],
+            "email": row[2],
+            "password_hash": row[3],
+            "role": row[4],
+            "created_at": row[5].isoformat() if row[5] else None,
+        }
+    finally:
+        conn.close()
+
+
+def get_user_llm_config(username: str) -> dict | None:
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT llm_enabled, llm_url, llm_model, llm_api_key "
+                "FROM users WHERE username=%s",
+                (username,),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "llm_enabled": bool(row[0]),
+            "llm_url": row[1],
+            "llm_model": row[2],
+            "llm_api_key": row[3],
+        }
+    finally:
+        conn.close()
+
+
+def save_user_llm_config(
+    username: str,
+    enabled: bool,
+    url: str,
+    model: str,
+    encrypted_key: str | None,
+):
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET llm_enabled=%s, llm_url=%s, llm_model=%s, llm_api_key=%s "
+                "WHERE username=%s",
+                (int(enabled), url, model, encrypted_key, username),
+            )
+        conn.commit()
     finally:
         conn.close()
 
@@ -184,14 +303,15 @@ def list_users():
     conn = get_db_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT id, username, role, created_at FROM users ORDER BY id")
+            cur.execute("SELECT id, username, email, role, created_at FROM users ORDER BY id")
             rows = cur.fetchall()
         return [
             {
                 "id": row[0],
                 "username": row[1],
-                "role": row[2],
-                "created_at": row[3].isoformat() if row[3] else None,
+                "email": row[2],
+                "role": row[3],
+                "created_at": row[4].isoformat() if row[4] else None,
             }
             for row in rows
         ]
@@ -222,11 +342,91 @@ def update_user_password(username: str, password: str):
         conn.close()
 
 
+def update_user_email(username: str, email: str):
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE users SET email=%s WHERE username=%s",
+                (email.strip().lower(), username),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def delete_user(username: str):
     conn = get_db_conn()
     try:
         with conn.cursor() as cur:
             cur.execute("DELETE FROM users WHERE username=%s", (username,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def create_email_code(email: str, code: str, purpose: str, expires_at: datetime) -> int:
+    """保存验证码哈希，同邮箱未使用的旧码先作废。"""
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE email_verify_codes SET used=1 "
+                "WHERE email=%s AND purpose=%s AND used=0",
+                (email, purpose),
+            )
+            cur.execute(
+                "INSERT INTO email_verify_codes(email, code_hash, purpose, expires_at) "
+                "VALUES(%s, %s, %s, %s)",
+                (email, hashlib.sha256(code.encode("utf-8")).hexdigest(), purpose, expires_at),
+            )
+            cur.execute("SELECT LAST_INSERT_ID()")
+            code_id = int(cur.fetchone()[0])
+        conn.commit()
+        return code_id
+    finally:
+        conn.close()
+
+
+def has_active_email_code(email: str, purpose: str) -> bool:
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(*) FROM email_verify_codes "
+                "WHERE email=%s AND purpose=%s AND used=0 "
+                "AND expires_at > UTC_TIMESTAMP() "
+                "AND created_at > DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 60 SECOND)",
+                (email, purpose),
+            )
+            return int(cur.fetchone()[0]) > 0
+    finally:
+        conn.close()
+
+
+def get_email_code(email: str, purpose: str) -> dict | None:
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, code_hash, expires_at FROM email_verify_codes "
+                "WHERE email=%s AND purpose=%s AND used=0 AND expires_at > UTC_TIMESTAMP() "
+                "ORDER BY id DESC LIMIT 1",
+                (email, purpose),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None
+        return {"id": row[0], "code_hash": row[1], "expires_at": row[2]}
+    finally:
+        conn.close()
+
+
+def mark_email_code_used(code_id: int):
+    conn = get_db_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE email_verify_codes SET used=1 WHERE id=%s", (code_id,))
         conn.commit()
     finally:
         conn.close()
@@ -282,10 +482,11 @@ def delete_auth_token(token_hash: str):
 
 
 def purge_expired_tokens():
+    """清理过期 token，每次限制删除量，避免 token 量大时阻塞登录。"""
     conn = get_db_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM auth_tokens WHERE expires_at <= UTC_TIMESTAMP()")
+            cur.execute("DELETE FROM auth_tokens WHERE expires_at <= UTC_TIMESTAMP() LIMIT 500")
         conn.commit()
     finally:
         conn.close()

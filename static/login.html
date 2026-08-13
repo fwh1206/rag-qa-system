@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 · 智答工作台</title>
+    <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body class="login-body" data-page="login">
+    <div class="login-shell">
+        <section class="login-brand-panel">
+            <div class="login-brand-row">
+                <div class="brand-mark">知</div>
+                <div>
+                    <div class="login-brand-name">智答工作台</div>
+                    <div class="login-brand-sub">RAG 知识库问答系统</div>
+                </div>
+            </div>
+
+            <div class="login-brand-copy">
+                <h1>把知识库变成可溯源的对话</h1>
+                <p>上传文档、混合检索、生成回答，每一步都能回到原文片段。</p>
+            </div>
+
+            <div class="login-feature-list">
+                <div class="login-feature">
+                    <span class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/></svg>
+                    </span>
+                    <div><div class="login-feature-title">文档知识库</div><div class="login-feature-desc">PDF / Word / Excel / Markdown / TXT</div></div>
+                </div>
+                <div class="login-feature">
+                    <span class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                    </span>
+                    <div><div class="login-feature-title">混合检索</div><div class="login-feature-desc">向量 + BM25 + Rerank 二阶段精排</div></div>
+                </div>
+                <div class="login-feature">
+                    <span class="feature-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z"/><path d="m9 12 2 2 4-4"/></svg>
+                    </span>
+                    <div><div class="login-feature-title">可溯源回答</div><div class="login-feature-desc">Markdown 渲染与引用来源对照</div></div>
+                </div>
+            </div>
+
+            <div class="login-status"><span class="status-dot"></span>本地服务在线</div>
+        </section>
+
+        <section class="login-form-panel">
+            <div class="login-form-card">
+                <div class="login-form-head">
+                    <h2 id="authTitle">欢迎回来</h2>
+                    <p id="authSub">登录后继续你的知识库问答</p>
+                </div>
+                <div class="login-tabs">
+                    <button type="button" class="login-tab active" id="loginTabBtn">登录</button>
+                    <button type="button" class="login-tab" id="registerTabBtn">注册</button>
+                    <button type="button" class="login-tab" id="resetTabBtn">找回密码</button>
+                </div>
+
+                <form id="loginForm" class="auth-form">
+                    <div class="login-subtabs">
+                        <button type="button" class="login-subtab active" id="passLoginTab">密码登录</button>
+                        <button type="button" class="login-subtab" id="codeLoginTab">验证码登录</button>
+                    </div>
+                    <div id="passLoginFields">
+                        <label class="field-label" for="loginAccount">邮箱 / 用户名</label>
+                        <input id="loginAccount" class="login-field" type="text" autocomplete="username" maxlength="64" placeholder="请输入注册邮箱或用户名">
+                        <label class="field-label" for="loginPass">密码</label>
+                        <input id="loginPass" class="login-field" type="password" autocomplete="current-password" maxlength="128" placeholder="请输入密码">
+                    </div>
+                    <div id="codeLoginFields" class="hidden">
+                        <label class="field-label" for="loginEmail">邮箱</label>
+                        <input id="loginEmail" class="login-field" type="email" autocomplete="email" maxlength="255" placeholder="请输入注册邮箱">
+                        <label class="field-label" for="loginCode">验证码</label>
+                        <div class="code-row">
+                            <input id="loginCode" class="login-field" type="text" inputmode="numeric" maxlength="6" placeholder="6 位验证码">
+                            <button id="sendLoginCodeBtn" class="btn" type="button">获取验证码</button>
+                        </div>
+                    </div>
+                    <div id="loginError" class="login-error hidden"></div>
+                    <div id="loginInfo" class="login-error info hidden"></div>
+                    <button id="loginBtn" class="btn primary login-btn" type="submit">登录</button>
+                    <button type="button" class="auth-link" id="forgotPassLink">忘记密码？</button>
+                </form>
+
+                <form id="registerForm" class="auth-form hidden">
+                    <label class="field-label" for="regEmail">邮箱</label>
+                    <input id="regEmail" class="login-field" type="email" autocomplete="email" maxlength="255" placeholder="用于接收验证码">
+                    <label class="field-label" for="regCode">验证码</label>
+                    <div class="code-row">
+                        <input id="regCode" class="login-field" type="text" inputmode="numeric" maxlength="6" placeholder="6 位验证码">
+                        <button id="sendRegCodeBtn" class="btn" type="button">获取验证码</button>
+                    </div>
+                    <label class="field-label" for="regUser">用户名</label>
+                    <input id="regUser" class="login-field" type="text" autocomplete="username" maxlength="64" placeholder="设置用户名">
+                    <label class="field-label" for="regPass">密码</label>
+                    <input id="regPass" class="login-field" type="password" autocomplete="new-password" minlength="4" maxlength="128" placeholder="至少 4 位">
+                    <label class="field-label" for="regPass2">确认密码</label>
+                    <input id="regPass2" class="login-field" type="password" autocomplete="new-password" minlength="4" maxlength="128" placeholder="再次输入密码">
+                    <div id="regError" class="login-error hidden"></div>
+                    <div id="regInfo" class="login-error info hidden"></div>
+                    <button id="regBtn" class="btn primary login-btn" type="submit">创建账号</button>
+                </form>
+
+                <form id="resetForm" class="auth-form hidden">
+                    <label class="field-label" for="resetEmail">邮箱</label>
+                    <input id="resetEmail" class="login-field" type="email" autocomplete="email" maxlength="255" placeholder="请输入注册邮箱">
+                    <label class="field-label" for="resetCode">验证码</label>
+                    <div class="code-row">
+                        <input id="resetCode" class="login-field" type="text" inputmode="numeric" maxlength="6" placeholder="6 位验证码">
+                        <button id="sendResetCodeBtn" class="btn" type="button">获取验证码</button>
+                    </div>
+                    <label class="field-label" for="resetPass">新密码</label>
+                    <input id="resetPass" class="login-field" type="password" autocomplete="new-password" minlength="4" maxlength="128" placeholder="至少 4 位">
+                    <label class="field-label" for="resetPass2">确认新密码</label>
+                    <input id="resetPass2" class="login-field" type="password" autocomplete="new-password" minlength="4" maxlength="128" placeholder="再次输入新密码">
+                    <div id="resetError" class="login-error hidden"></div>
+                    <div id="resetInfo" class="login-error info hidden"></div>
+                    <button id="resetBtn" class="btn primary login-btn" type="submit">重置密码</button>
+                </form>
+            </div>
+        </section>
+    </div>
+
+    <script src="/static/js/common.js"></script>
+    <script src="/static/js/login.js"></script>
+</body>
+</html>

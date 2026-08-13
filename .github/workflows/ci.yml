@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,5 +16,39 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
-      - name: Run tests
-        run: python -m pytest tests -q
+      - name: Lint with ruff
+        run: ruff check api core config utils main.py scripts tests --output-format concise
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: rag_qa_db
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      RAG_DB_HOST: 127.0.0.1
+      RAG_DB_PORT: 3306
+      RAG_DB_USER: root
+      RAG_DB_PASSWORD: root
+      RAG_DB_NAME: rag_qa_db
+      DEEPSEEK_API_KEY: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+      - name: Run tests with coverage
+        run: |
+          python -m pytest tests -q --cov=api --cov=core --cov=utils --cov=config --cov-report=term-missing --cov-fail-under=60

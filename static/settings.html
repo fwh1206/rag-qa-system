@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>系统设置 · 智答工作台</title>
+    <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body data-page="settings">
+    <nav class="topnav"></nav>
+
+    <div class="app-body">
+        <main class="main">
+            <div class="page">
+                <div class="page-header">
+                    <div>
+                        <h1>系统设置</h1>
+                        <p>调整检索、生成与提示词参数，保存后立即生效。</p>
+                    </div>
+                    <div class="header-meta">
+                        <span class="status-pill"><span id="adminPill">管理员设置</span></span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-head">提示词模板</div>
+                    <div class="card-body">
+                        <div class="form-item" style="margin-bottom:4px">
+                            <label>回答生成提示词</label>
+                            <span class="hint">支持 {history}、{context}、{question} 三个占位符，决定 AI 回答的语气与方式。</span>
+                            <textarea id="cfgPrompt" class="prompt-area"></textarea>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-head">检索参数</div>
+                    <div class="card-body">
+                        <div class="form-grid">
+                            <div class="form-item">
+                                <label>召回数量 top_k（1-10）</label>
+                                <input type="number" id="cfgTopK" min="1" max="10">
+                            </div>
+                            <div class="form-item">
+                                <label>相似度阈值（0-1）</label>
+                                <span class="hint">低于此阈值的片段将被过滤（BM25 命中除外）。</span>
+                                <input type="number" id="cfgThreshold" min="0" max="1" step="0.05">
+                            </div>
+                            <div class="form-item">
+                                <label>生成温度（0-1）</label>
+                                <span class="hint">越高回答越随机发散。</span>
+                                <input type="number" id="cfgTemp" min="0" max="1" step="0.05">
+                            </div>
+                            <div class="form-item">
+                                <label>切片大小（100-2000）</label>
+                                <input type="number" id="cfgChunk" min="100" max="2000" step="50">
+                            </div>
+                            <div class="form-item">
+                                <label>切片重叠</label>
+                                <input type="number" id="cfgOverlap" min="0" max="500" step="10">
+                            </div>
+                            <div class="form-item">
+                                <label>精排数量 rerank_top_k（1-10）</label>
+                                <input type="number" id="cfgRerankK" min="1" max="10">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-head">功能开关</div>
+                    <div class="card-body">
+                        <div class="form-grid">
+                            <div class="form-item checkbox">
+                                <input type="checkbox" id="cfgThinking">
+                                <label for="cfgThinking">思考过程（先生成推理再回答）</label>
+                            </div>
+                            <div class="form-item checkbox">
+                                <input type="checkbox" id="cfgRewrite">
+                                <label for="cfgRewrite">多轮问题改写</label>
+                            </div>
+                            <div class="form-item checkbox">
+                                <input type="checkbox" id="cfgRerank">
+                                <label for="cfgRerank">二阶段精排（Rerank）</label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card admin-card hidden" id="llmManageCard">
+                    <div class="card-head">
+                        <span>大模型服务</span>
+                        <span class="status-pill"><span id="llmStatus">未配置</span></span>
+                    </div>
+                    <div class="card-body">
+                        <div class="email-form-grid">
+                            <div class="form-item">
+                                <label>API 地址（OpenAI 兼容）</label>
+                                <input id="llmUrl" class="field-input" type="text" maxlength="512" placeholder="https://api.deepseek.com/v1/chat/completions">
+                            </div>
+                            <div class="form-item">
+                                <label>模型名称</label>
+                                <input id="llmModel" class="field-input" type="text" maxlength="128" placeholder="deepseek-chat / gpt-4o-mini">
+                            </div>
+                            <div class="form-item">
+                                <label>API Key</label>
+                                <input id="llmKey" class="field-input" type="password" maxlength="512" placeholder="留空表示保持原配置">
+                            </div>
+                        </div>
+                        <div class="email-actions">
+                            <button class="btn" id="testLlmBtn" type="button">测试模型连接</button>
+                            <button class="btn primary" id="saveLlmBtn" type="button">保存模型配置</button>
+                        </div>
+                        <div id="llmStatusText" class="email-status-text"></div>
+                    </div>
+                </div>
+
+                <div class="card admin-card hidden" id="emailManageCard">
+                    <div class="card-head">
+                        <span>邮箱服务</span>
+                        <span class="status-pill"><span id="emailStatus">未配置</span></span>
+                    </div>
+                    <div class="card-body">
+                        <div class="email-form-grid">
+                            <div class="form-item">
+                                <label>SMTP 服务器</label>
+                                <input id="smtpHost" class="field-input" type="text" maxlength="255" placeholder="smtp.qq.com">
+                            </div>
+                            <div class="form-item">
+                                <label>端口</label>
+                                <input id="smtpPort" class="field-input" type="number" min="1" max="65535" placeholder="465">
+                            </div>
+                            <div class="form-item">
+                                <label>SMTP 账号</label>
+                                <input id="smtpUser" class="field-input" type="text" maxlength="255" placeholder="you@example.com">
+                            </div>
+                            <div class="form-item">
+                                <label>授权码 / 密码</label>
+                                <input id="smtpPassword" class="field-input" type="password" maxlength="255" placeholder="留空表示保持原配置">
+                            </div>
+                            <div class="form-item">
+                                <label>发件人地址</label>
+                                <input id="smtpFrom" class="field-input" type="text" maxlength="255" placeholder="默认使用 SMTP 账号">
+                            </div>
+                            <div class="form-item checkbox">
+                                <input id="smtpSsl" type="checkbox">
+                                <label for="smtpSsl">使用 SSL 加密连接</label>
+                            </div>
+                        </div>
+                        <div class="email-actions">
+                            <input id="testEmail" class="field-input" type="email" maxlength="255" placeholder="测试收件邮箱">
+                            <button class="btn" id="sendTestEmailBtn" type="button">发送测试邮件</button>
+                            <button class="btn primary" id="saveEmailBtn" type="button">保存邮箱设置</button>
+                        </div>
+                        <div id="emailStatusText" class="email-status-text"></div>
+                    </div>
+                </div>
+
+                <div class="card admin-card hidden" id="userManageCard">
+                    <div class="card-head">
+                        <span>用户管理</span>
+                        <span class="panel-count" id="userTotal">0</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="user-create-row">
+                            <input id="newUserEmail" class="field-input" type="email" maxlength="255" placeholder="邮箱">
+                            <input id="newUserName" class="field-input" type="text" maxlength="64" placeholder="用户名">
+                            <input id="newUserPass" class="field-input" type="password" maxlength="128" placeholder="密码">
+                            <select id="newUserRole" class="category-select">
+                                <option value="user">普通用户</option>
+                                <option value="admin">管理员</option>
+                            </select>
+                            <button class="btn primary" id="addUserBtn" type="button">新增用户</button>
+                        </div>
+                        <div id="userList" class="user-list"></div>
+                    </div>
+                </div>
+
+                <div class="side-actions" style="justify-content:flex-end">
+                    <button class="btn" id="resetBtn">恢复默认</button>
+                    <button class="btn primary" id="saveBtn">保存设置</button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/js/common.js"></script>
+    <script>
+        const $ = (id) => document.getElementById(id);
+
+        async function loadConfig() {
+            const cfg = await api("/config");
+            $("cfgPrompt").value = cfg.prompt_template || "";
+            $("cfgTopK").value = cfg.top_k;
+            $("cfgThreshold").value = cfg.similarity_threshold;
+            $("cfgTemp").value = cfg.temperature;
+            $("cfgChunk").value = cfg.chunk_size;
+            $("cfgOverlap").value = cfg.chunk_overlap;
+            $("cfgRerankK").value = cfg.rerank_top_k;
+            $("cfgThinking").checked = !!cfg.thinking_enabled;
+            $("cfgRewrite").checked = !!cfg.rewrite_enabled;
+            $("cfgRerank").checked = !!cfg.rerank_enabled;
+        }
+
+        async function saveSettings() {
+            const payload = {
+                prompt_template: $("cfgPrompt").value.trim(),
+                top_k: parseInt($("cfgTopK").value, 10),
+                similarity_threshold: parseFloat($("cfgThreshold").value),
+                temperature: parseFloat($("cfgTemp").value),
+                chunk_size: parseInt($("cfgChunk").value, 10),
+                chunk_overlap: parseInt($("cfgOverlap").value, 10),
+                rerank_top_k: parseInt($("cfgRerankK").value, 10),
+                thinking_enabled: $("cfgThinking").checked,
+                rewrite_enabled: $("cfgRewrite").checked,
+                rerank_enabled: $("cfgRerank").checked,
+            };
+            try {
+                const data = await api("/config", { method: "PUT", body: JSON.stringify(payload) });
+                toast(data.msg || "设置已保存");
+            } catch (e) { toast(e.message, "error"); }
+        }
+
+        async function resetSettings() {
+            if (!confirm("确定恢复全部默认设置吗？")) return;
+            try {
+                const data = await api("/config/reset", { method: "POST" });
+                toast(data.msg || "已恢复默认");
+                await loadConfig();
+            } catch (e) { toast(e.message, "error"); }
+        }
+
+        async function loadLlmConfig() {
+            try {
+                const data = await api("/config/llm");
+                $("llmUrl").value = data.url || "";
+                $("llmModel").value = data.model || "";
+                $("llmStatus").textContent = data.configured ? "已配置" : "未配置";
+                $("llmStatusText").textContent = data.has_api_key ? "已保存 API Key，留空可保持不变" : "";
+            } catch (e) {
+                toast("模型配置加载失败：" + e.message, "error");
+            }
+        }
+
+        async function saveLlmConfig() {
+            const url = $("llmUrl").value.trim();
+            const model = $("llmModel").value.trim();
+            if (!url || !model) {
+                toast("请填写 API 地址和模型名称", "error");
+                return;
+            }
+            try {
+                const data = await api("/config/llm", {
+                    method: "PUT",
+                    body: JSON.stringify({
+                        api_key: $("llmKey").value,
+                        url,
+                        model,
+                    }),
+                });
+                $("llmKey").value = "";
+                $("llmStatus").textContent = data.configured ? "已配置" : "未配置";
+                $("llmStatusText").textContent = "模型配置已保存，可点击“测试模型连接”验证";
+                toast(data.msg || "大模型配置已保存");
+            } catch (e) {
+                toast("保存失败：" + e.message, "error");
+            }
+        }
+
+        async function testLlmConfig() {
+            $("testLlmBtn").disabled = true;
+            $("llmStatusText").textContent = "正在测试模型连接...";
+            try {
+                const data = await api("/config/llm/test", {
+                    method: "POST",
+                    body: JSON.stringify({
+                        url: $("llmUrl").value.trim(),
+                        model: $("llmModel").value.trim(),
+                        api_key: $("llmKey").value,
+                    }),
+                });
+                $("llmStatusText").textContent = "模型调用成功：" + (data.reply || "");
+                toast("模型调用成功");
+            } catch (e) {
+                $("llmStatusText").textContent = e.message;
+                toast("模型调用失败：" + e.message, "error");
+            } finally {
+                $("testLlmBtn").disabled = false;
+            }
+        }
+
+        async function loadEmailConfig() {
+            try {
+                const data = await api("/config/email");
+                $("smtpHost").value = data.host || "";
+                $("smtpPort").value = data.port || 465;
+                $("smtpUser").value = data.user || "";
+                $("smtpFrom").value = data.from_address || "";
+                $("smtpSsl").checked = !!data.use_ssl;
+                $("emailStatus").textContent = data.configured ? "已配置" : "未配置";
+                $("emailStatusText").textContent = data.has_password ? "已保存授权码，密码留空可保持不变" : "";
+            } catch (e) {
+                toast("邮箱配置加载失败：" + e.message, "error");
+            }
+        }
+
+        async function saveEmailConfig() {
+            const payload = {
+                host: $("smtpHost").value.trim(),
+                port: parseInt($("smtpPort").value, 10) || 465,
+                user: $("smtpUser").value.trim(),
+                password: $("smtpPassword").value,
+                from_address: $("smtpFrom").value.trim(),
+                use_ssl: $("smtpSsl").checked,
+            };
+            if (!payload.host) {
+                toast("请填写 SMTP 服务器", "error");
+                return;
+            }
+            try {
+                const data = await api("/config/email", {
+                    method: "PUT",
+                    body: JSON.stringify(payload),
+                });
+                $("smtpPassword").value = "";
+                $("emailStatus").textContent = data.configured ? "已配置" : "未配置";
+                $("emailStatusText").textContent = "邮箱设置已保存，点击“发送测试邮件”验证连通性";
+                toast(data.msg || "邮箱设置已保存");
+            } catch (e) {
+                toast("保存失败：" + e.message, "error");
+            }
+        }
+
+        async function sendTestEmail() {
+            const toEmail = $("testEmail").value.trim();
+            if (!toEmail) {
+                toast("请填写测试收件邮箱", "error");
+                return;
+            }
+            $("sendTestEmailBtn").disabled = true;
+            try {
+                const data = await api("/config/email/test", {
+                    method: "POST",
+                    body: JSON.stringify({ to_email: toEmail }),
+                });
+                $("emailStatusText").textContent = data.msg || "测试邮件已发送";
+                toast("测试邮件已发送");
+            } catch (e) {
+                $("emailStatusText").textContent = e.message;
+                toast("发送失败：" + e.message, "error");
+            } finally {
+                $("sendTestEmailBtn").disabled = false;
+            }
+        }
+
+        async function loadUsers() {
+            try {
+                const data = await api("/auth/users");
+                $("userTotal").textContent = (data.users || []).length;
+                renderUsers(data.users || []);
+            } catch (e) {
+                toast("用户列表加载失败：" + e.message, "error");
+            }
+        }
+
+        function renderUsers(users) {
+            const box = $("userList");
+            if (!users.length) {
+                box.innerHTML = '<div class="empty-block">暂无用户</div>';
+                return;
+            }
+            box.innerHTML = users.map((u) =>
+                '<div class="user-row">' +
+                '<div class="user-info"><span class="user-name">' + escapeHtml(u.username) + '</span>' +
+                '<span class="user-email">' + escapeHtml(u.email || "未绑定邮箱") + '</span>' +
+                '<span class="user-role">' + (u.role === "admin" ? "管理员" : "普通用户") + '</span></div>' +
+                '<div class="user-actions">' +
+                '<button class="btn" data-action="role" data-user="' + escapeHtml(u.username) + '">' + (u.role === "admin" ? "设为普通用户" : "设为管理员") + '</button>' +
+                '<button class="btn" data-action="password" data-user="' + escapeHtml(u.username) + '">重置密码</button>' +
+                '<button class="btn danger-ghost" data-action="delete" data-user="' + escapeHtml(u.username) + '">删除</button>' +
+                '</div></div>'
+            ).join("");
+            box.querySelectorAll("[data-action]").forEach((btn) => {
+                const user = btn.dataset.user;
+                if (btn.dataset.action === "role") {
+                    btn.addEventListener("click", () => changeUserRole(user, users.find((u) => u.username === user).role === "admin" ? "user" : "admin"));
+                } else if (btn.dataset.action === "password") {
+                    btn.addEventListener("click", () => resetUserPassword(user));
+                } else {
+                    btn.addEventListener("click", () => deleteUserAccount(user));
+                }
+            });
+        }
+
+        async function addUser() {
+            const email = $("newUserEmail").value.trim().toLowerCase();
+            const username = $("newUserName").value.trim();
+            const password = $("newUserPass").value;
+            const role = $("newUserRole").value;
+            if (!username || !password) {
+                toast("请输入用户名和密码", "error");
+                return;
+            }
+            try {
+                await api("/auth/users", { method: "POST", body: JSON.stringify({ username, password, role, email }) });
+                $("newUserEmail").value = "";
+                $("newUserName").value = "";
+                $("newUserPass").value = "";
+                await loadUsers();
+                toast("用户已创建");
+            } catch (e) {
+                toast("创建失败：" + e.message, "error");
+            }
+        }
+
+        async function changeUserRole(username, role) {
+            try {
+                await api("/auth/users/" + encodeURIComponent(username), {
+                    method: "PUT",
+                    body: JSON.stringify({ role }),
+                });
+                await loadUsers();
+                toast("角色已更新");
+            } catch (e) {
+                toast("角色更新失败：" + e.message, "error");
+            }
+        }
+
+        async function resetUserPassword(username) {
+            const password = prompt("为 " + username + " 设置新密码");
+            if (!password) return;
+            try {
+                await api("/auth/users/" + encodeURIComponent(username), {
+                    method: "PUT",
+                    body: JSON.stringify({ password }),
+                });
+                toast("密码已重置");
+            } catch (e) {
+                toast("密码重置失败：" + e.message, "error");
+            }
+        }
+
+        async function deleteUserAccount(username) {
+            if (!confirm("确认删除用户 " + username + "？")) return;
+            try {
+                await api("/auth/users/" + encodeURIComponent(username), { method: "DELETE" });
+                await loadUsers();
+                toast("用户已删除");
+            } catch (e) {
+                toast("删除失败：" + e.message, "error");
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", async function () {
+            try {
+                await requireAuth("/login");
+                const me = await api("/auth/me");
+                const isAdmin = me.role === "admin";
+                $("adminPill").textContent = isAdmin ? "管理员设置" : "只读预览";
+                $("llmManageCard").classList.toggle("hidden", !isAdmin);
+                $("userManageCard").classList.toggle("hidden", !isAdmin);
+                $("emailManageCard").classList.toggle("hidden", !isAdmin);
+                if (isAdmin) {
+                    await loadLlmConfig();
+                    await loadEmailConfig();
+                    await loadUsers();
+                    $("saveLlmBtn").addEventListener("click", saveLlmConfig);
+                    $("testLlmBtn").addEventListener("click", testLlmConfig);
+                    $("saveEmailBtn").addEventListener("click", saveEmailConfig);
+                    $("sendTestEmailBtn").addEventListener("click", sendTestEmail);
+                    $("addUserBtn").addEventListener("click", addUser);
+                }
+                ["cfgPrompt", "cfgTopK", "cfgThreshold", "cfgTemp", "cfgChunk", "cfgOverlap", "cfgRerankK", "cfgThinking", "cfgRewrite", "cfgRerank", "saveBtn", "resetBtn"].forEach((id) => {
+                    const el = document.getElementById(id);
+                    if (el) el.disabled = !isAdmin;
+                });
+                await loadConfig();
+                $("saveBtn").addEventListener("click", saveSettings);
+                $("resetBtn").addEventListener("click", resetSettings);
+            } catch (e) { toast(e.message, "error"); }
+        });
+    </script>
+</body>
+</html>

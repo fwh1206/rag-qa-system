@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>历史记录 · 智答工作台</title>
+    <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body data-page="history">
+    <nav class="topnav"></nav>
+
+    <div class="app-body">
+        <main class="main">
+            <div class="page">
+                <div class="page-header">
+                    <h1>历史记录</h1>
+                    <p>查看各会话的问答记录，支持导出与清空。</p>
+                </div>
+
+                <div class="toolbar">
+                    <select id="sessionSelect" class="session-select"></select>
+                    <button class="btn" id="refreshBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
+                        刷新
+                    </button>
+                    <span class="spacer"></span>
+                    <button class="btn" id="exportBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        导出
+                    </button>
+                    <button class="btn danger-ghost" id="clearBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/></svg>
+                        清空
+                    </button>
+                </div>
+
+                <div class="card">
+                    <div class="card-head">
+                        <span id="listTitle">问答记录</span>
+                        <span id="totalCount" class="panel-count">0</span>
+                    </div>
+                    <div class="card-body" style="padding:0" id="historyList">
+                        <div class="empty-block">加载中…</div>
+                    </div>
+                    <div id="historyPager" class="pager hidden">
+                        <button class="btn pager-btn" id="prevBtn">上一页</button>
+                        <span id="pageInfo" class="pager-info">1 / 1</span>
+                        <button class="btn pager-btn" id="nextBtn">下一页</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/js/common.js"></script>
+    <script>
+        let page = 1;
+        const PAGE_SIZE = 15;
+        const $ = (id) => document.getElementById(id);
+
+        async function loadSessions() {
+            try {
+                const data = await api("/sessions/list");
+                const items = data.sessions || [];
+                const sel = $("sessionSelect");
+                sel.innerHTML = items.map((s) =>
+                    '<option value="' + escapeHtml(s.session_id) + '">' + escapeHtml(s.name || s.session_id) + '</option>'
+                ).join("");
+                if (items.length && !sel.value) sel.value = items[0].session_id;
+            } catch (e) { /* ignore */ }
+        }
+
+        async function loadHistory() {
+            const sessionId = $("sessionSelect").value || "default";
+            const params = new URLSearchParams({ session_id: sessionId, page, page_size: PAGE_SIZE });
+            const data = await api("/history/list?" + params.toString());
+            const items = data.history || [];
+            $("totalCount").textContent = data.total;
+            $("listTitle").textContent = "问答记录 · " + sessionId;
+            if (!items.length) {
+                $("historyList").innerHTML = '<div class="empty-block">该会话暂无记录。</div>';
+                $("historyPager").classList.add("hidden");
+                return;
+            }
+            $("historyList").innerHTML = items.map((it) =>
+                '<div class="history-item">' +
+                '<div class="history-q">' + escapeHtml(it.question) + '</div>' +
+                '<div class="history-a">' + escapeHtml(it.answer || "") + '</div>' +
+                '<div class="history-meta"><span>' + formatTime(it.created_at) + '</span></div>' +
+                '</div>'
+            ).join("");
+            const pages = Math.max(1, Math.ceil(data.total / PAGE_SIZE));
+            $("historyPager").classList.toggle("hidden", pages <= 1);
+            $("pageInfo").textContent = page + " / " + pages;
+            $("prevBtn").disabled = page <= 1;
+            $("nextBtn").disabled = page >= pages;
+        }
+
+        async function exportHistory() {
+            const sessionId = $("sessionSelect").value || "default";
+            const url = "/history/export?session_id=" + encodeURIComponent(sessionId) + "&format=md";
+            const resp = await fetch(url, { headers: { "X-Auth-Token": getAuthToken() } });
+            if (!resp.ok) {
+                const d = await resp.json().catch(() => ({}));
+                toast(d.detail || "导出失败", "error");
+                return;
+            }
+            const text = await resp.text();
+            const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = "对话记录_" + sessionId + ".md";
+            a.click();
+            URL.revokeObjectURL(a.href);
+            toast("已导出");
+        }
+
+        async function clearHistory() {
+            const sessionId = $("sessionSelect").value || "default";
+            if (!confirm("确定清空会话 " + sessionId + " 的全部记录吗？")) return;
+            try {
+                await api("/history/clear?session_id=" + encodeURIComponent(sessionId), { method: "DELETE" });
+                toast("已清空");
+                page = 1;
+                await loadHistory();
+            } catch (e) { toast(e.message, "error"); }
+        }
+
+        document.addEventListener("DOMContentLoaded", async function () {
+            try {
+                await requireAuth("/login");
+                await loadSessions();
+                $("sessionSelect").addEventListener("change", () => { page = 1; loadHistory(); });
+                $("refreshBtn").addEventListener("click", loadHistory);
+                $("exportBtn").addEventListener("click", exportHistory);
+                $("clearBtn").addEventListener("click", clearHistory);
+                $("prevBtn").addEventListener("click", () => { if (page > 1) { page--; loadHistory(); } });
+                $("nextBtn").addEventListener("click", () => { page++; loadHistory(); });
+                await loadHistory();
+            } catch (e) {
+                toast(e.message, "error");
+            }
+        });
+    </script>
+</body>
+</html>

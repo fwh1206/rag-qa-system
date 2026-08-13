@@ -1,6 +1,7 @@
 """对话记录接口：分页查询历史、导出和会话管理。"""
 
 import json
+import re
 
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, Field
@@ -16,8 +17,10 @@ from core.database import (
     require_session_access,
 )
 
-
 router = APIRouter(prefix="", tags=["对话记录"])
+
+# session_id 会拼进导出文件名，需去掉引号/换行等可能破坏响应头的字符
+_EXPORT_FILENAME_SAFE = re.compile(r'[^\w.-]+')
 
 
 class SessionRename(BaseModel):
@@ -77,7 +80,9 @@ def export_history(
     return Response(
         content=content,
         media_type=media,
-        headers={"Content-Disposition": f'attachment; filename="chat_{session_id}.{suffix}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="chat_{_EXPORT_FILENAME_SAFE.sub("_", session_id)}.{suffix}"'
+        },
     )
 
 
