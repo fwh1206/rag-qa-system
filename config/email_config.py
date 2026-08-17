@@ -1,4 +1,7 @@
-"""邮箱 SMTP 配置：默认读取环境变量，管理员可在系统设置中持久化覆盖。"""
+"""邮箱 SMTP 配置：默认读取环境变量，管理员可在系统设置中持久化覆盖。
+
+密码以 Fernet 加密后写入 JSON，加载时自动解密；兼容旧版明文存储。
+"""
 
 import json
 import os
@@ -12,6 +15,7 @@ from config.settings import (
     EMAIL_SMTP_USER,
     EMAIL_USE_SSL,
 )
+from core.secret_box import decrypt_stored_secret, encrypt_secret
 
 EMAIL_CONFIG_PATH = os.path.join(BASE_DIR, "config", "email_config.json")
 _KEYS = ("host", "port", "user", "password", "from_address", "use_ssl")
@@ -37,6 +41,8 @@ def load_email_config() -> dict:
             for key in _KEYS:
                 if key in saved:
                     cfg[key] = saved[key]
+            if "password" in saved:
+                cfg["password"] = decrypt_stored_secret(saved["password"], "SMTP 密码")
         except (OSError, ValueError):
             pass
     return cfg
@@ -44,6 +50,8 @@ def load_email_config() -> dict:
 
 def save_email_config(cfg: dict) -> dict:
     data = {key: cfg.get(key, _env_defaults()[key]) for key in _KEYS}
+    if data.get("password"):
+        data["password"] = encrypt_secret(data["password"])
     os.makedirs(os.path.dirname(EMAIL_CONFIG_PATH), exist_ok=True)
     tmp = EMAIL_CONFIG_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:

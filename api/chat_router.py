@@ -79,6 +79,7 @@ def _retrieve(
                 "similarity": sim,
                 "bm25_score": hit.get("bm25_score"),
                 "rerank_score": hit.get("rerank_score"),
+                "storage": hit.get("storage"),
             }
         )
         write_log(f"命中片段：{filename}#{chunk_index}，相似度 {sim}，BM25 {hit.get('bm25_score')}")
@@ -279,9 +280,11 @@ def chat_stream(payload: ChatRequest, current: dict = Depends(require_auth)):
                 write_log(f"自由对话流式回答中断：{exc}")
                 yield _sse({"type": "error", "message": str(getattr(exc, "detail", "AI服务调用失败"))})
                 return
-            answer = "".join(parts)
-            if answer.strip():
-                save_chat_record(payload.session_id, q, answer, owner=current.get("username"))
+            finally:
+                # 客户端断开（GeneratorExit）或异常中断时也要落库，避免丢历史
+                answer = "".join(parts)
+                if answer.strip():
+                    save_chat_record(payload.session_id, q, answer, owner=current.get("username"))
             yield _sse({"type": "done", "answer": answer, "thinking": ""})
 
         return StreamingResponse(
@@ -338,12 +341,14 @@ def chat_stream(payload: ChatRequest, current: dict = Depends(require_auth)):
             message = str(getattr(exc, "detail", "AI服务调用失败"))
             yield _sse({"type": "error", "message": message})
             return
+        finally:
+            # 客户端断开（GeneratorExit）或异常中断时也要落库，避免丢历史
+            answer = "".join(parts)
+            if answer.strip():
+                save_chat_record(
+                    payload.session_id, q, answer, thinking=thinking, owner=current.get("username")
+                )
 
-        answer = "".join(parts)
-        if answer.strip():
-            save_chat_record(
-                payload.session_id, q, answer, thinking=thinking, owner=current.get("username")
-            )
         yield _sse({"type": "done", "answer": answer, "thinking": thinking})
 
     return StreamingResponse(

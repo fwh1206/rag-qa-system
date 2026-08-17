@@ -8,9 +8,13 @@ from datetime import datetime
 import pymysql
 from dbutils.pooled_db import PooledDB
 from fastapi import HTTPException
-from pymysql.err import OperationalError
+from pymysql.err import IntegrityError, OperationalError
 
 from config.settings import AUTH_PASSWORD, AUTH_USERNAME, DB_CONFIG, DB_POOL_SIZE
+from core.logger import write_log
+
+ERR_USER_EXISTS = "用户名或邮箱已存在"
+ERR_DB_ERROR = "数据库错误，请稍后重试"
 
 _pool = None
 _pool_lock = threading.Lock()
@@ -193,20 +197,30 @@ def create_user(
     password: str,
     role: str = "user",
     email: str | None = None,
-) -> bool:
+) -> tuple[bool, str]:
+    """创建用户，用户名统一小写存储，避免登录查询与注册写入大小写不一致。
+
+    返回 (是否成功, 错误信息)；业务冲突（重名/重邮箱）与系统错误分开，
+    便于上层区分 400 / 500。
+    """
     conn = get_db_conn()
     try:
         with conn.cursor() as cur:
+            username = (username or "").strip().lower()
             normalized_email = (email or "").strip().lower() or None
             cur.execute(
                 "INSERT INTO users(username, email, password_hash, role) VALUES(%s, %s, %s, %s)",
                 (username, normalized_email, hash_password(password), role),
             )
         conn.commit()
-        return True
-    except Exception:
+        return True, ""
+    except IntegrityError:
         conn.rollback()
-        return False
+        return False, ERR_USER_EXISTS
+    except Exception as exc:
+        conn.rollback()
+        write_log(f"创建用户失败 {username}：{exc}")
+        return False, ERR_DB_ERROR
     finally:
         conn.close()
 
@@ -521,21 +535,18 @@ def require_session_access(session_id: str, current: dict):
 
 
 def ensure_session(session_id: str, name: str | None = None, owner: str | None = None):
+    """确保会话存在；已存在时仅补录 owner（原本无归属的旧会话）。
+
+    使用原子 upsert，避免并发首条消息时 SELECT+INSERT 竞态撞唯一键。
+    """
     conn = get_db_conn()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM chat_sessions WHERE session_id=%s", (session_id,))
-            exists = int(cur.fetchone()[0]) > 0
-            if not exists:
-                cur.execute(
-                    "INSERT INTO chat_sessions(session_id, name, owner) VALUES(%s, %s, %s)",
-                    (session_id, name or "新会话", owner),
-                )
-            elif owner:
-                cur.execute(
-                    "UPDATE chat_sessions SET owner=%s WHERE session_id=%s AND owner IS NULL",
-                    (owner, session_id),
-                )
+            cur.execute(
+                "INSERT INTO chat_sessions(session_id, name, owner) VALUES(%s, %s, %s) "
+                "ON DUPLICATE KEY UPDATE owner = IF(owner IS NULL, VALUES(owner), owner)",
+                (session_id, name or "新会话", owner),
+            )
         conn.commit()
     finally:
         conn.close()

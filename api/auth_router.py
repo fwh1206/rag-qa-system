@@ -12,6 +12,7 @@ from config.email_config import is_email_configured
 from config.settings import AUTH_ENABLED, AUTH_PASSWORD, AUTH_USERNAME, EMAIL_CODE_TTL, EMAIL_DEV_MODE
 from core.auth import create_token, login, require_admin, require_auth, revoke_token
 from core.database import (
+    ERR_USER_EXISTS,
     count_admins,
     create_email_code,
     create_user,
@@ -120,13 +121,14 @@ def auth_login(payload: LoginRequest, request: Request):
     if not token:
         raise HTTPException(status_code=401, detail="邮箱/用户名或密码错误")
     user = get_user(account) or get_user_by_email(account.lower())
-    username = user["username"] if user else account
-    role = user["role"] if user else "admin"
+    if not user:
+        # login 成功但用户恰好被删除等竞态：安全起见 fail-closed，不再兜底成 admin
+        raise HTTPException(status_code=401, detail="账号不存在或已注销")
     return {
         "token": token,
-        "username": username,
-        "email": user["email"] if user else None,
-        "role": role,
+        "username": user["username"],
+        "email": user["email"],
+        "role": user["role"],
         "auth_enabled": AUTH_ENABLED,
     }
 
@@ -329,7 +331,9 @@ def change_password(payload: PasswordChange, current: dict = Depends(require_aut
     else:
         if username != AUTH_USERNAME or payload.old_password != AUTH_PASSWORD:
             raise HTTPException(status_code=401, detail="当前密码不正确")
-        create_user(username, payload.new_password, current.get("role") or "admin")
+        ok, err = create_user(username, payload.new_password, current.get("role") or "admin")
+        if not ok:
+            raise HTTPException(status_code=400 if err == ERR_USER_EXISTS else 500, detail=err)
     return {"msg": "密码已更新", "username": username}
 
 
@@ -338,7 +342,7 @@ def auth_register(payload: RegisterRequest, request: Request):
     """自助注册：邮箱验证码校验通过后创建普通用户。"""
     if not REGISTER_LIMITER.allow(_client_key(request)):
         raise HTTPException(status_code=429, detail="注册过于频繁，请稍后再试")
-    username = payload.username.strip()
+    username = payload.username.strip().lower()
     email = payload.email.strip().lower()
     if not EMAIL_RE.match(email):
         raise HTTPException(status_code=400, detail="邮箱格式不正确")
@@ -350,8 +354,9 @@ def auth_register(payload: RegisterRequest, request: Request):
     expected = hashlib.sha256(payload.code.encode("utf-8")).hexdigest()
     if not record or not secrets.compare_digest(record["code_hash"], expected):
         raise HTTPException(status_code=401, detail="验证码错误或已过期")
-    if not create_user(username, payload.password, "user", email=email):
-        raise HTTPException(status_code=400, detail="注册失败，请稍后重试")
+    ok, err = create_user(username, payload.password, "user", email=email)
+    if not ok:
+        raise HTTPException(status_code=400 if err == ERR_USER_EXISTS else 500, detail=err)
     mark_email_code_used(record["id"])
     return {"msg": "注册成功", "username": username, "email": email}
 
@@ -363,14 +368,16 @@ def auth_users_list(_: dict = Depends(require_admin)):
 
 @router.post("/users")
 def auth_users_create(payload: UserCreate, _: dict = Depends(require_admin)):
-    if get_user(payload.username):
+    username = payload.username.strip().lower()
+    if get_user(username):
         raise HTTPException(status_code=400, detail="用户名已存在")
     email = (payload.email or "").strip().lower() or None
     if email and get_user_by_email(email):
         raise HTTPException(status_code=400, detail="邮箱已存在")
-    if not create_user(payload.username, payload.password, payload.role, email=email):
-        raise HTTPException(status_code=400, detail="用户创建失败")
-    return {"msg": "用户创建成功", "username": payload.username, "email": email}
+    ok, err = create_user(username, payload.password, payload.role, email=email)
+    if not ok:
+        raise HTTPException(status_code=400 if err == ERR_USER_EXISTS else 500, detail=err)
+    return {"msg": "用户创建成功", "username": username, "email": email}
 
 
 @router.put("/users/{username}")

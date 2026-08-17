@@ -48,6 +48,11 @@ def _find_file(name: str, owner: str | None) -> dict | None:
     return next((item for item in get_all_files(owner=owner) if item["name"] == name), None)
 
 
+def _find_file_by_storage(storage: str, owner: str | None) -> dict | None:
+    """按唯一存储路径定位文件，避免不同用户上传同名文件时的歧义。"""
+    return next((item for item in get_all_files(owner=owner) if item["storage"] == storage), None)
+
+
 class TextUpload(BaseModel):
     """手动粘贴文本入库的请求体。"""
 
@@ -113,7 +118,13 @@ def upload_file(
             os.remove(tmp_path)
         raise
     write_log(f"文档入库成功：{storage}，切片数量：{chunk_num}")
-    return {"code": 200, "msg": "文档入库成功", "filename": filename, "chunk_num": chunk_num}
+    return {
+        "code": 200,
+        "msg": "文档入库成功",
+        "filename": filename,
+        "storage": storage,
+        "chunk_num": chunk_num,
+    }
 
 
 @router.get("/kb/list")
@@ -153,21 +164,29 @@ def kb_categories(current: dict = Depends(require_auth)):
 
 @router.get("/kb/preview")
 def kb_preview(
-    filename: str = Query(..., min_length=1, max_length=255),
+    filename: str | None = Query(None, min_length=1, max_length=255),
+    storage: str | None = Query(None, min_length=1, max_length=512),
     current: dict = Depends(require_auth),
 ):
-    """返回文档提取后的纯文本，供前端预览与溯源跳转。"""
-    safe_name = _safe_filename(filename)
-    info = _find_file(safe_name, _scope_owner(current))
+    """返回文档提取后的纯文本，供前端预览与溯源跳转。
+
+    优先按 storage 精确定位，避免不同用户同名文件歧义；未传时回退按文件名匹配。
+    """
+    owner = _scope_owner(current)
+    info = _find_file_by_storage(storage, owner) if storage else None
+    safe_name = None
+    if info is None and filename:
+        safe_name = _safe_filename(filename)
+        info = _find_file(safe_name, owner)
     if not info:
         raise HTTPException(status_code=404, detail="文件不存在")
     path = storage_to_abs(info["storage"])
-    suffix = os.path.splitext(safe_name)[1].lower()
+    suffix = os.path.splitext(info["storage"])[1].lower()
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="文件不存在")
     text = read_file(path, suffix)
     return {
-        "filename": safe_name,
+        "filename": safe_name or info["name"],
         "category": info.get("category") or DEFAULT_CATEGORY,
         "size": os.path.getsize(path),
         "chunk_num": info.get("chunk_num", 0),
@@ -225,12 +244,20 @@ def kb_test_route(
 
 @router.delete("/kb/delete")
 def kb_delete(
-    filename: str = Query(..., min_length=1, max_length=255),
+    filename: str | None = Query(None, min_length=1, max_length=255),
+    storage: str | None = Query(None, min_length=1, max_length=512),
     current: dict = Depends(require_auth),
 ):
-    """删除单个文件：普通用户只能删自己的，管理员可删全站。"""
-    safe_name = _safe_filename(filename)
-    info = _find_file(safe_name, _scope_owner(current))
+    """删除单个文件：普通用户只能删自己的，管理员可删全站。
+
+    优先按 storage 精确定位，避免不同用户同名文件歧义；未传时回退按文件名匹配。
+    """
+    owner = _scope_owner(current)
+    info = _find_file_by_storage(storage, owner) if storage else None
+    safe_name = None
+    if info is None and filename:
+        safe_name = _safe_filename(filename)
+        info = _find_file(safe_name, owner)
     if not info:
         raise HTTPException(status_code=404, detail="文件不存在")
     path = storage_to_abs(info["storage"])
@@ -245,8 +272,8 @@ def kb_delete(
     if has_file:
         os.remove(path)
     remove_file_meta(info["storage"])
-    delete_graph_cache(safe_name, owner=info.get("owner"))
-    return {"msg": f"{safe_name} 删除完成"}
+    delete_graph_cache(safe_name or info["name"], owner=info.get("owner"))
+    return {"msg": f"{safe_name or info['name']} 删除完成"}
 
 
 @router.delete("/kb/clear_all")
@@ -342,4 +369,10 @@ def upload_text(payload: TextUpload, current: dict = Depends(require_auth)):
             os.remove(tmp_path)
         raise
     write_log(f"文本文档入库，名称：{doc_name}，切片数量：{chunk_num}")
-    return {"code": 200, "msg": "文本录入成功", "filename": doc_name, "chunk_num": chunk_num}
+    return {
+        "code": 200,
+        "msg": "文本录入成功",
+        "filename": doc_name,
+        "storage": storage,
+        "chunk_num": chunk_num,
+    }

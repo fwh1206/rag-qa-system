@@ -22,56 +22,65 @@ def _safe_name(filename: str) -> str:
     return safe
 
 
+def _find_file(storage: str | None, safe_name: str | None, owner: str | None) -> dict | None:
+    """优先按 storage 精确定位，避免不同用户同名文件歧义；未命中时回退按文件名匹配。"""
+    files = get_all_files(owner=owner)
+    if storage:
+        found = next((item for item in files if item["storage"] == storage), None)
+        if found:
+            return found
+    if safe_name:
+        return next((item for item in files if item["name"] == safe_name), None)
+    return None
+
+
+def _resolve_file(filename: str | None, storage: str | None, current: dict) -> dict | None:
+    safe_name = _safe_name(filename) if filename else None
+    owner = None if current.get("role") == "admin" else current.get("username")
+    return _find_file(storage, safe_name, owner)
+
+
 @router.post("/extract")
 def kg_extract(
-    filename: str = Query(..., min_length=1, max_length=255),
+    filename: str | None = Query(None, min_length=1, max_length=255),
+    storage: str | None = Query(None, min_length=1, max_length=512),
     current: dict = Depends(require_auth),
 ):
     """读取文档并调用大模型抽取实体/关系，结果缓存到 data/kg/。"""
-    safe_name = _safe_name(filename)
-    owner = None if current.get("role") == "admin" else current.get("username")
-    info = next(
-        (item for item in get_all_files(owner=owner) if item["name"] == safe_name),
-        None,
-    )
+    info = _resolve_file(filename, storage, current)
     if not info:
         raise HTTPException(status_code=404, detail="文件不存在或格式不支持")
     path = storage_to_abs(info["storage"])
-    suffix = os.path.splitext(safe_name)[1].lower()
+    suffix = os.path.splitext(info["storage"])[1].lower()
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="文件不存在或格式不支持")
     text = read_file(path, suffix)
-    return extract_knowledge_graph(safe_name, text, owner=info.get("owner"))
+    return extract_knowledge_graph(info["name"], text, owner=info.get("owner"))
 
 
 @router.get("/file")
 def kg_file(
-    filename: str = Query(..., min_length=1, max_length=255),
+    filename: str | None = Query(None, min_length=1, max_length=255),
+    storage: str | None = Query(None, min_length=1, max_length=512),
     current: dict = Depends(require_auth),
 ):
     """读取指定文档已生成的图谱；未生成时返回 missing。"""
-    safe_name = _safe_name(filename)
-    owner = None if current.get("role") == "admin" else current.get("username")
-    info = next(
-        (item for item in get_all_files(owner=owner) if item["name"] == safe_name),
-        None,
-    )
+    info = _resolve_file(filename, storage, current)
     if not info:
         raise HTTPException(status_code=404, detail="文件不存在或格式不支持")
-    return load_cached_graph(safe_name, owner=info.get("owner"))
+    return load_cached_graph(info["name"], owner=info.get("owner"))
 
 
 @router.delete("/file")
 def kg_delete(
-    filename: str = Query(..., min_length=1, max_length=255),
+    filename: str | None = Query(None, min_length=1, max_length=255),
+    storage: str | None = Query(None, min_length=1, max_length=512),
     current: dict = Depends(require_auth),
 ):
     """删除文档时同步清理图谱缓存。"""
-    safe_name = _safe_name(filename)
-    owner = None if current.get("role") == "admin" else current.get("username")
-    info = next(
-        (item for item in get_all_files(owner=owner) if item["name"] == safe_name),
-        None,
-    )
-    delete_graph_cache(safe_name, owner=info.get("owner") if info else None)
+    if not filename and not storage:
+        raise HTTPException(status_code=400, detail="缺少文件参数")
+    info = _resolve_file(filename, storage, current)
+    name = info["name"] if info else (_safe_name(filename) if filename else None)
+    delete_graph_cache(name, owner=info.get("owner") if info else None)
     return {"msg": "图谱缓存已清理"}

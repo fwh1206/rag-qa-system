@@ -59,6 +59,8 @@ def send_verification_email(email: str, code: str, purpose: str = "register") ->
         subject = "智答工作台注册验证码"
     elif purpose == "reset":
         subject = "智答工作台找回密码验证码"
+    elif purpose == "bind":
+        subject = "智答工作台绑定邮箱验证码"
     else:
         subject = "智答工作台登录验证码"
     body = (

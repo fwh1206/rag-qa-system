@@ -160,7 +160,6 @@
                 const fname = f.name || f.filename || "";
                 const icon = fname.toLowerCase().match(/\.(pdf|docx?|txt|md|xlsx?|json|csv)$/)
                     ? fname.toLowerCase().split(".").pop() : "file";
-                const fnameEsc = escapeHtml(fname).replace(/'/g, "\\'");
                 return (
                     '<div class="file-row">' +
                     '<div class="file-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/></svg></div>' +
@@ -170,8 +169,8 @@
                     '<span class="file-category">' + escapeHtml(f.category || "默认分组") + '</span></div>' +
                     '</div>' +
                     '<div class="file-tools">' +
-                    '<button class="icon-btn" title="预览" onclick="previewFile(\'' + fnameEsc + '\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>' +
-                    '<button class="icon-btn" title="删除" onclick="deleteFile(\'' + fnameEsc + '\')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>' +
+                    '<button class="icon-btn" title="预览" data-action="preview" data-name="' + escapeHtml(fname) + '" data-storage="' + escapeHtml(f.storage || "") + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg></button>' +
+                    '<button class="icon-btn" title="删除" data-action="delete" data-name="' + escapeHtml(fname) + '" data-storage="' + escapeHtml(f.storage || "") + '"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg></button>' +
                     '</div></div>'
                 );
             }).join("");
@@ -245,7 +244,9 @@
                     });
                     $("uploadProgressText").textContent = "AI 正在分析文档，提取实体和关系：" + f.name;
                     try {
-                        await api("/kg/extract?filename=" + encodeURIComponent(data.filename), { method: "POST" });
+                        let kgUrl = "/kg/extract?filename=" + encodeURIComponent(data.filename);
+                        if (data.storage) kgUrl += "&storage=" + encodeURIComponent(data.storage);
+                        await api(kgUrl, { method: "POST" });
                     } catch (e) { /* 图谱失败不影响文档入库 */ }
                     ok++;
                 } catch (e) {
@@ -262,10 +263,12 @@
         }
 
         /* 删除 / 清空 / 重建 */
-        async function deleteFile(name) {
+        async function deleteFile(name, storage) {
             if (!confirm("确定删除文档 " + name + " 吗？")) return;
             try {
-                await api("/kb/delete?filename=" + encodeURIComponent(name), { method: "DELETE" });
+                let url = "/kb/delete?filename=" + encodeURIComponent(name);
+                if (storage) url += "&storage=" + encodeURIComponent(storage);
+                await api(url, { method: "DELETE" });
                 toast("文档已删除");
                 await refreshFiles();
             } catch (e) { toast(e.message, "error"); }
@@ -293,9 +296,11 @@
         }
 
         /* 预览 */
-        async function previewFile(name) {
+        async function previewFile(name, storage) {
             try {
-                const data = await api("/kb/preview?filename=" + encodeURIComponent(name));
+                let url = "/kb/preview?filename=" + encodeURIComponent(name);
+                if (storage) url += "&storage=" + encodeURIComponent(storage);
+                const data = await api(url);
                 $("previewTitle").textContent = name;
                 $("previewMeta").textContent = (data.category ? "分组：" + data.category + " · " : "") + "字符数 " + (data.text || "").length;
                 $("previewBody").textContent = data.text || "(空文件)";
@@ -381,6 +386,16 @@
             $("filePrev").addEventListener("click", () => { if (filePage > 1) { filePage--; refreshFiles(); } });
             $("fileNext").addEventListener("click", () => { filePage++; refreshFiles(); });
             $("categoryFilter").addEventListener("change", () => { filePage = 1; refreshFiles(); });
+            // 文件列表按钮事件委托（预览/删除），避免 inline onclick 在文件名含引号时失效
+            $("fileList").addEventListener("click", (e) => {
+                const btn = e.target.closest("button[data-action]");
+                if (!btn) return;
+                const action = btn.dataset.action;
+                const name = btn.dataset.name || "";
+                const storage = btn.dataset.storage || "";
+                if (action === "preview") previewFile(name, storage);
+                else if (action === "delete") deleteFile(name, storage);
+            });
 
             await loadCategories();
             await refreshFiles();

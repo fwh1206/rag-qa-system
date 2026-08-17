@@ -51,6 +51,8 @@ services:
       - ./data:/app/data
       - ./vector_db:/app/vector_db
       - ./logs:/app/logs
+      # 持久化运行配置（llm/email/rag_config）与加密密钥文件，重建容器不丢失
+      - ./config:/app/config
 
 volumes:
   mysql_data:

@@ -3,7 +3,12 @@
 const $ = (id) => document.getElementById(id);
 
 const urlSession = new URLSearchParams(window.location.search).get("session");
-let sessionId = urlSession || localStorage.getItem(sessionStorageKey()) || "default";
+let sessionId = urlSession || localStorage.getItem(sessionStorageKey());
+if (!sessionId) {
+    // 不共用 "default" 会话：每个用户首次进入生成唯一会话，避免跨用户 403 冲突
+    sessionId = newSessionId();
+    localStorage.setItem(sessionStorageKey(), sessionId);
+}
 let currentSessionName = "新会话";
 let sessions = [];
 let currentSources = [];
@@ -139,9 +144,13 @@ function switchSession(nextId) {
     loadHistory();
 }
 
+function newSessionId() {
+    return "sess_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
 function newSession() {
     if (busy) return;
-    sessionId = "sess_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+    sessionId = newSessionId();
     localStorage.setItem(sessionStorageKey(), sessionId);
     $("sessionSidebar").classList.remove("open");
     currentSessionName = "新会话";
@@ -468,23 +477,34 @@ function renderKgGraph(graph) {
     });
 }
 
-function getKgGraph(filename) {
-    if (!kgPromises[filename]) {
-        kgPromises[filename] = (async () => {
-            if (kgCache[filename]) return kgCache[filename];
-            let graph = await api("/kg/file?filename=" + encodeURIComponent(filename));
+function getKgGraph(file) {
+    const key = file.storage || file.filename;
+    if (!kgPromises[key]) {
+        kgPromises[key] = (async () => {
+            if (kgCache[key]) return kgCache[key];
+            const params = new URLSearchParams({ filename: file.filename });
+            if (file.storage) params.set("storage", file.storage);
+            const query = params.toString();
+            let graph = await api("/kg/file?" + query);
             if (graph.status === "missing") {
-                graph = await api("/kg/extract?filename=" + encodeURIComponent(filename), { method: "POST" });
+                graph = await api("/kg/extract?" + query, { method: "POST" });
             }
-            kgCache[filename] = graph;
+            kgCache[key] = graph;
             return graph;
         })();
     }
-    return kgPromises[filename];
+    return kgPromises[key];
 }
 
 async function loadKnowledgeGraph(sources) {
-    const files = [...new Set((sources || []).map((s) => s.filename).filter(Boolean))];
+    // 以 storage（回退 filename）去重，同名文件来自不同用户时也能分别取图
+    const seen = new Map();
+    (sources || []).forEach((s) => {
+        if (!s.filename) return;
+        const key = s.storage || s.filename;
+        if (!seen.has(key)) seen.set(key, s);
+    });
+    const files = [...seen.values()];
     $("kgStatus").textContent = files.length ? "AI 正在分析文档，提取实体和关系..." : "知识图谱会在这里展示";
     $("kgStatus").classList.remove("hidden");
     if (!files.length) {
@@ -498,7 +518,7 @@ async function loadKnowledgeGraph(sources) {
         await Promise.all(files.map((file) => getKgGraph(file)));
     } catch (e) { /* 图谱失败不阻断回答 */ }
     files.forEach((file) => {
-        const graph = kgCache[file] || {};
+        const graph = kgCache[file.storage || file.filename] || {};
         (graph.entities || []).forEach((e) => {
             if (!seenEntities.has(e.id)) {
                 seenEntities.add(e.id);

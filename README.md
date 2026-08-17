@@ -151,7 +151,7 @@ Copy-Item .env.example .env
 docker compose up -d --build
 ```
 
-服务启动后访问 <http://localhost:8000>。`data/`、`vector_db/`、`logs/` 挂载到宿主机，MySQL 数据保存在 Docker volume。
+服务启动后访问 <http://localhost:8000>。`data/`、`vector_db/`、`logs/`、`config/` 挂载到宿主机（`config/` 用于持久化系统设置里保存的大模型/SMTP 配置与加密密钥文件，重建容器不丢失；MySQL 数据保存在 Docker volume）。
 
 ### 初始化样例知识库
 

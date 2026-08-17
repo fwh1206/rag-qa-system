@@ -76,6 +76,8 @@ def llm_chat(
             if resp.status_code in (408, 429) or resp.status_code >= 500:
                 raise RuntimeError(f"HTTP {resp.status_code}")
             resp.raise_for_status()
+            # 部分 OpenAI 兼容端点不声明 charset，requests 默认按 ISO-8859-1 解码会乱码
+            resp.encoding = "utf-8"
             return resp.json()["choices"][0]["message"]["content"]
         except Exception as exc:
             last_exc = exc
@@ -108,6 +110,8 @@ def llm_chat_stream(prompt: str, temperature: float = 0.6, llm_config: dict | No
             if resp.status_code in (408, 429) or resp.status_code >= 500:
                 raise RuntimeError(f"HTTP {resp.status_code}")
             resp.raise_for_status()
+            # 流式按 UTF-8 解码，避免端点未声明 charset 时中文乱码
+            resp.encoding = "utf-8"
             break
         except Exception as exc:
             last_exc = exc
